@@ -16,7 +16,9 @@ stages:
 
 fmt_validate:
   stage: validate
-  image: ghcr.io/opentofu/opentofu:1.11.10
+  image:
+    name: ghcr.io/opentofu/opentofu:1.11.10
+    entrypoint: [""]
   script:
     - tofu fmt -check -recursive
     - tofu init -backend=false -input=false
