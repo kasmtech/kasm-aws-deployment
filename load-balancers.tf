@@ -6,12 +6,9 @@ locals {
   ## carrying TGs for every zone — identical to the legacy single-LB shape.
   ##
   ## Regional + LZ per-zone private listener rules now live inside
-  ## module.kasm_zone (aws_lb_listener_rule.webapp_private). Callers may inject
-  ## extra per-placement private listener rules via
-  ## var.additional_private_lb_listener_rules_by_placement (e.g. the parent
-  ## wrapper's add-on zones, which don't go through module.kasm_zone).
+  ## module.kasm_zone (aws_lb_listener_rule.webapp_private).
   private_lb_https_listener_rules_by_placement = {
-    for region in local.webapp_placement_regions : region => lookup(var.additional_private_lb_listener_rules_by_placement, region, {})
+    for region in local.webapp_placement_regions : region => {}
   }
 
   private_lb_subnet_ids_by_placement = {
@@ -21,11 +18,9 @@ locals {
   }
 
   ## Regional + LZ per-zone private TGs now live inside module.kasm_zone
-  ## (aws_lb_target_group.webapp_private). Callers may inject extra per-placement
-  ## private target groups via var.additional_private_lb_target_groups_by_placement
-  ## (e.g. the parent wrapper's add-on zones).
+  ## (aws_lb_target_group.webapp_private).
   private_lb_target_groups_by_placement = {
-    for region in local.webapp_placement_regions : region => lookup(var.additional_private_lb_target_groups_by_placement, region, {})
+    for region in local.webapp_placement_regions : region => {}
   }
 
   public_lb_subnet_names = {
@@ -52,7 +47,6 @@ locals {
         }
         if local.webapp_placement_resolved[zone] == region && !contains(var.compute_excluded_regions, zone)
       },
-      lookup(var.additional_public_lb_listener_rules_by_placement, region, {}),
       local.local_zones_public_lb_https_listener_rules_by_placement[region],
     )
   }
@@ -61,9 +55,6 @@ locals {
   ##  1. Primary region: webapp-pub-tg + per-zone TGs for zones placed in primary.
   ##  2. Non-primary placement region: webapp-pub-tg + per-zone TGs for zones placed there + proxy-pub-tg.
   ##  3. Non-placement secondary region: proxy-pub-tg only (today's behavior).
-  ##
-  ## Callers may inject extra per-placement public TGs via
-  ## var.additional_public_lb_target_groups_by_placement (e.g. parent add-on zones).
   ##
   ## ALB target groups are regional — an ASG can only attach to TGs in its own region.
   ## When a zone moves placement via var.webapp_deployment_target, its TGs move
@@ -90,7 +81,6 @@ locals {
           }
           if local.webapp_placement_resolved[zone] == var.primary_region && !contains(var.compute_excluded_regions, zone)
         },
-        lookup(var.additional_public_lb_target_groups_by_placement, var.primary_region, {}),
         local.local_zones_public_lb_target_groups_by_placement[var.primary_region],
       )
     },
@@ -116,7 +106,6 @@ locals {
           }
           if local.webapp_placement_resolved[zone] == region && !contains(var.compute_excluded_regions, zone)
         },
-        lookup(var.additional_public_lb_target_groups_by_placement, region, {}),
         local.local_zones_public_lb_target_groups_by_placement[region],
         {
           "${region}-proxy-pub-tg" = {
@@ -186,7 +175,6 @@ locals {
       }
       if !contains(var.compute_excluded_regions, region)
     },
-    var.additional_lb_zone_outputs,
     local.local_zones_lb_zone_outputs,
   )
 }

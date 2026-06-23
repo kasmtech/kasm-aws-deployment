@@ -257,7 +257,7 @@ output "public_lb_zone_ids" {
 }
 
 output "public_lb_target_group_arns_by_name" {
-  description = "Per-region public ALB target-group ARNs keyed by TG name (includes any injected via var.additional_public_lb_target_groups_by_placement)."
+  description = "Per-region public ALB target-group ARNs keyed by TG name."
   value       = local.public_target_group_arns_by_name
 }
 
@@ -276,7 +276,7 @@ output "private_lb_zone_id" {
 }
 
 output "private_lb_target_group_arns_by_name" {
-  description = "Primary private ALB target-group ARNs keyed by TG name (includes any injected via var.additional_private_lb_target_groups_by_placement)."
+  description = "Primary private ALB target-group ARNs keyed by TG name."
   value       = local.private_target_group_arns_by_name
 }
 

@@ -670,7 +670,7 @@ locals {
             protocol    = "tcp"
             from_port   = 3389
             to_port     = 3389
-            cidr_blocks = [""]
+            cidr_blocks = tolist([""])
             source_sgid = module.vpc[var.primary_region].security_group_ids["cpx-security-group"]
           },
           {
@@ -680,7 +680,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = [""]
+            cidr_blocks = tolist([""])
             source_sgid = module.vpc[var.primary_region].security_group_ids["cpx-security-group"]
           },
           {
@@ -690,7 +690,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = [""]
+            cidr_blocks = tolist([""])
             source_sgid = module.vpc[var.primary_region].security_group_ids["webapp-security-group"]
           }
           ] : [
@@ -701,7 +701,7 @@ locals {
             protocol    = "tcp"
             from_port   = 3389
             to_port     = 3389
-            cidr_blocks = [""]
+            cidr_blocks = tolist([""])
             source_sgid = module.vpc[region].security_group_ids["cpx-security-group"]
           },
           {
@@ -711,7 +711,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = [""]
+            cidr_blocks = tolist([""])
             source_sgid = module.vpc[region].security_group_ids["cpx-security-group"]
           },
           {
@@ -721,7 +721,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = [for ip in module.vpc[var.primary_region].nat_public_ips : "${ip}/32"]
+            cidr_blocks = tolist([for ip in module.vpc[var.primary_region].nat_public_ips : "${ip}/32"])
             source_sgid = ""
           },
           {
@@ -731,7 +731,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = values(local.webapp_subnets[var.primary_region])[*].cidr_block
+            cidr_blocks = tolist(values(local.webapp_subnets[var.primary_region])[*].cidr_block)
             source_sgid = ""
           }
         ],
@@ -743,7 +743,7 @@ locals {
             protocol    = "tcp"
             from_port   = 4902
             to_port     = 4902
-            cidr_blocks = [for ip in module.vpc[region].nat_public_ips : "${ip}/32"]
+            cidr_blocks = tolist([for ip in module.vpc[region].nat_public_ips : "${ip}/32"])
             source_sgid = ""
           },
           {
@@ -753,7 +753,7 @@ locals {
             protocol    = "tcp"
             from_port   = 3389
             to_port     = 3389
-            cidr_blocks = [for ip in module.vpc[region].nat_public_ips : "${ip}/32"]
+            cidr_blocks = tolist([for ip in module.vpc[region].nat_public_ips : "${ip}/32"])
             source_sgid = ""
           }
         ]

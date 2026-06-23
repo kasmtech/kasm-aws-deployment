@@ -137,13 +137,13 @@ locals {
   full_path_list = split("/", abspath(path.module))
   current_folder = element(local.full_path_list, length(local.full_path_list) - 1)
 
-  aws_default_tags = merge(var.freeform_tags, {
+  aws_default_tags = merge({
     Deployed_by     = "Terraform"
     Managed_by      = local.current_folder
     Project_name    = local.standard_customer_name
     Deployment_type = var.deployment_type
     Customer_name   = local.standard_customer_name
-  })
+  }, coalesce(var.freeform_tags, {}))
 
   public_agent_subnet_ids = {
     for region in local.all_regions :

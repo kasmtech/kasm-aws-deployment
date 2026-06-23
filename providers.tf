@@ -1,5 +1,5 @@
 terraform {
-  required_version = "= 1.11.6"
+  required_version = "= 1.11.10"
   backend "s3" {
     bucket  = var.backend_bucket
     key     = "aws/${local.standard_customer_name}/${local.current_folder}/terraform.tfstate"
