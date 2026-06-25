@@ -136,6 +136,7 @@ locals {
   ## Full file path for "Managed_By" tag variable
   full_path_list = split("/", abspath(path.module))
   current_folder = element(local.full_path_list, length(local.full_path_list) - 1)
+  userdata_dir   = var.userdata_dir != "" ? var.userdata_dir : "${path.module}/userdata"
 
   aws_default_tags = merge({
     Deployed_by     = "Terraform"

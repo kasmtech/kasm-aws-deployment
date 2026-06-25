@@ -1030,46 +1030,64 @@ variable "waf_bypass_ips" {
   }
 }
 
-## Per-role userdata template script paths (relative to ./userdata/).
-## Defaults point at the consolidated, public-safe scripts under userdata/consolidated/.
-## Override in kasm_internal.tfvars to a bare filename to use the original Kasm-internal
-## wrappers (which still wget core.sh + role components from kasm-static-content S3 and
-## bundle Teleport/Wazuh/Grafana Alloy join logic).
+## Per-role userdata template script paths, relative to var.userdata_dir.
+## Standalone child deployments default var.userdata_dir to this module's
+## userdata directory and default these filenames to the bundled standalone
+## scripts. Parent-wrapper deployments pass the parent repo's userdata directory
+## and parent-owned filenames explicitly.
+
+variable "userdata_dir" {
+  description = "Directory containing userdata templates. Empty string defaults to this module's ./userdata directory for standalone child deployments."
+  type        = string
+  default     = ""
+}
 
 variable "agent_userdata_file" {
   description = "Path under ./userdata/ for the autoscale agent userdata template."
   type        = string
-  default     = "consolidated/autoscale_agent_userdata.sh"
+  default     = "autoscale_agent_userdata.sh"
 }
 
 variable "bastion_userdata_file" {
   description = "Path under ./userdata/ for the bastion userdata template."
   type        = string
-  default     = "consolidated/bastion_userdata.sh"
+  default     = "bastion_userdata.sh"
 }
 
 variable "cpx_userdata_file" {
   description = "Path under ./userdata/ for the CPX (guac) userdata template."
   type        = string
-  default     = "consolidated/cpx_userdata.sh"
+  default     = "cpx_userdata.sh"
 }
 
 variable "db_userdata_file" {
   description = "Path under ./userdata/ for the database userdata template."
   type        = string
-  default     = "consolidated/database_userdata.sh"
+  default     = "database_userdata.sh"
+}
+
+variable "db_init_userdata_file" {
+  description = "Path under ./userdata/ for the remote DB init userdata template."
+  type        = string
+  default     = "db_init_userdata.sh"
 }
 
 variable "proxy_userdata_file" {
   description = "Path under ./userdata/ for the proxy userdata template."
   type        = string
-  default     = "consolidated/proxy_userdata.sh"
+  default     = "proxy_userdata.sh"
 }
 
 variable "webapp_userdata_file" {
   description = "Path under ./userdata/ for the webapp/manager userdata template."
   type        = string
-  default     = "consolidated/webapp_userdata.sh"
+  default     = "webapp_userdata.sh"
+}
+
+variable "windows_userdata_file" {
+  description = "Path under ./userdata/ for the Windows agent userdata template."
+  type        = string
+  default     = "windows_userdata.ps1"
 }
 
 #######################################

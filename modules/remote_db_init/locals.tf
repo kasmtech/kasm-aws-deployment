@@ -30,11 +30,11 @@ locals {
   ## decompresses, and runs as normal. Compressed size is ~6KB. Use the
   ## aws_instance.user_data_base64 field, which accepts non-UTF8 bytes.
   ##
-  ## The script lives in the root module's userdata/ directory alongside other
-  ## VM bootstrap scripts, so we reference it via path.root rather than copying
-  ## it into the module.
+  ## The script lives in the caller-selected userdata directory. Standalone child
+  ## deployments default this to the child module's bundled userdata directory;
+  ## the parent wrapper passes its own userdata directory explicitly.
   userdata = base64gzip(
-    templatefile("${path.root}/userdata/db_init_userdata.sh", {
+    templatefile("${var.userdata_dir}/${var.userdata_file}", {
       AWS_REGION            = var.primary_region
       DB_HOSTNAME           = "database-${var.primary_region}.${var.private_domain}"
       DB_PORT               = 5432

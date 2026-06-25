@@ -4,7 +4,7 @@ locals {
   db_private_hostname    = "database.${local.private_domain}"
 
   database_userdata = base64encode(
-    templatefile("${path.module}/userdata/${var.db_userdata_file}", {
+    templatefile("${local.userdata_dir}/${var.db_userdata_file}", {
       ADDITIONAL_DATABASE_INSTALL_ARGS = var.database_additional_install_arguments
       BACKUP_BUCKET_DIR_NAME           = var.generate_db_preseed ? "aws/${local.standard_customer_name}/" : ""
       BLOCK_DEVICE                     = "nvme2n1"
@@ -33,8 +33,8 @@ locals {
       TELEPORT_VERSION                 = var.teleport_version
       WAZUH_JOIN_GROUP                 = var.wazuh_group
 
-      # Vars consumed only by the consolidated db script. Originals ignore them; the
-      # consolidated script gates pgconfigctl tuning and enhanced monitoring on these
+      # Vars consumed only by the standalone db script. Originals ignore them; the
+      # standalone script gates pgconfigctl tuning and enhanced monitoring on these
       # being non-empty, so safe defaults are empty strings / "false".
       PGCONFIGCTL_SECRET_ID  = ""
       ENHANCED_DB_MONITORING = "false"
@@ -224,6 +224,8 @@ module "remote_db_init" {
   standard_customer_name = local.standard_customer_name
   subnet_id              = local.webapp_subnet_ids[0]
   use_rds                = var.use_rds
+  userdata_dir           = local.userdata_dir
+  userdata_file          = var.db_init_userdata_file
   vpc_cidr               = local.vpc_cidr[var.primary_region]
 
   providers = {

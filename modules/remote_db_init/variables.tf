@@ -109,6 +109,16 @@ variable "use_rds" {
   type        = bool
 }
 
+variable "userdata_dir" {
+  description = "Directory containing userdata templates selected by the calling root module."
+  type        = string
+}
+
+variable "userdata_file" {
+  description = "Remote DB init userdata template filename relative to userdata_dir."
+  type        = string
+}
+
 variable "vpc_cidr" {
   description = "Primary-region VPC CIDR block. The module derives the in-VPC DNS resolver address (second IP) for use inside Docker bridges spawned by the installer."
   type        = string

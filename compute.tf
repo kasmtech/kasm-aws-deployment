@@ -14,11 +14,11 @@ locals {
     region => module.public_load_balancers[region].target_group_arns_by_name
   }
 
-  public_windows_user_data = file("${path.module}/userdata/windows_userdata.ps1")
+  public_windows_user_data = file("${local.userdata_dir}/${var.windows_userdata_file}")
 
   autoscale_agent_userdata = {
     for region in local.all_regions : region =>
-    templatefile("${path.module}/userdata/${var.agent_userdata_file}", {
+    templatefile("${local.userdata_dir}/${var.agent_userdata_file}", {
       ADDITIONAL_AGENT_INSTALL_ARGS = var.agent_additional_install_arguments
       CUSTOMER_ENV                  = var.kasm_domain_name
       CUSTOMER_NAME                 = local.standard_customer_name
@@ -41,7 +41,7 @@ locals {
 
   cpx_userdata = {
     for region in local.all_regions : region =>
-    base64encode(templatefile("${path.module}/userdata/${var.cpx_userdata_file}", {
+    base64encode(templatefile("${local.userdata_dir}/${var.cpx_userdata_file}", {
       ADDITIONAL_CPX_INSTALL_ARGS = var.cpx_additional_install_arguments
       CUSTOMER_ENV                = var.kasm_domain_name
       CUSTOMER_NAME               = local.standard_customer_name
@@ -62,7 +62,7 @@ locals {
   }
 
   proxy_userdata = {
-    for region in var.secondary_regions : region => base64encode(templatefile("${path.module}/userdata/${var.proxy_userdata_file}", {
+    for region in var.secondary_regions : region => base64encode(templatefile("${local.userdata_dir}/${var.proxy_userdata_file}", {
       ADDITIONAL_PROXY_INSTALL_ARGS = var.proxy_additional_install_arguments
       CUSTOMER_ENV                  = var.kasm_domain_name
       CUSTOMER_NAME                 = local.standard_customer_name
@@ -85,7 +85,7 @@ locals {
 
   webapp_userdata = {
     for region in local.all_regions : region =>
-    base64encode(templatefile("${path.module}/userdata/${var.webapp_userdata_file}", {
+    base64encode(templatefile("${local.userdata_dir}/${var.webapp_userdata_file}", {
       ADDITIONAL_WEBAPP_INSTALL_ARGS = var.webapp_additional_install_arguments
       CUSTOMER_ENV                   = var.kasm_domain_name
       CUSTOMER_NAME                  = local.standard_customer_name
@@ -111,7 +111,7 @@ locals {
 
   local_zones_cpx_userdata = {
     for lz in local.local_zone_keys : lz =>
-    base64encode(templatefile("${path.module}/userdata/${var.cpx_userdata_file}", {
+    base64encode(templatefile("${local.userdata_dir}/${var.cpx_userdata_file}", {
       ADDITIONAL_CPX_INSTALL_ARGS = var.cpx_additional_install_arguments
       CUSTOMER_ENV                = var.kasm_domain_name
       CUSTOMER_NAME               = local.standard_customer_name
@@ -133,7 +133,7 @@ locals {
   ## parent region to a cluster).
   local_zones_webapp_userdata = {
     for lz in local.local_zone_keys : lz =>
-    base64encode(templatefile("${path.module}/userdata/${var.webapp_userdata_file}", {
+    base64encode(templatefile("${local.userdata_dir}/${var.webapp_userdata_file}", {
       ADDITIONAL_WEBAPP_INSTALL_ARGS = var.webapp_additional_install_arguments
       CUSTOMER_ENV                   = var.kasm_domain_name
       CUSTOMER_NAME                  = local.standard_customer_name
@@ -153,4 +153,3 @@ locals {
     }))
   }
 }
-
