@@ -216,6 +216,9 @@ bash "$${KASM_DOWNLOAD_FOLDER}/kasm_release/install.sh" \
     -n "$${MANAGER_ADDRESS}" \
     "$${ADDITIONAL_INSTALL_ARGS}"
 
+echo "resolver 127.0.0.11 valid=10s ipv6=off" > /opt/kasm/current/conf/nginx/resolver.conf
+docker exec kasm_proxy nginx -s reload
+
 ##############################################################################
 # Firstboot hardening
 ##############################################################################
