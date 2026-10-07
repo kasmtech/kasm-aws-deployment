@@ -216,7 +216,9 @@ module "remote_db_init" {
   rds_database_name      = var.rds_database_name
   rds_master_username    = var.rds_master_username
   resource_name_prefix   = local.resource_name_prefix
+  root_volume_size       = var.remote_db_init_root_volume_size
   run_remote_db_init     = var.run_remote_db_init
+  run_remote_db_upgrade  = var.run_remote_db_upgrade
   security_group_id      = module.vpc[var.primary_region].security_group_ids["${var.primary_region}-webapp-security-group"]
   sm_admin_cred_arn      = module.aws_sm_user_creds["${local.standard_customer_name}/admin-credential"].secret_arn
   sm_system_cred_arn     = module.aws_sm_system_creds["${local.standard_customer_name}/other-credential"].secret_arn

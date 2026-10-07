@@ -16,6 +16,10 @@ locals {
 
   public_windows_user_data = file("${local.userdata_dir}/${var.windows_userdata_file}")
 
+  ## Agent startup script handed to Kasm AutoScale. The template is rendered
+  ## twice (templatefile() here, then Kasm's {placeholder} substitution at
+  ## launch), so the source intentionally doubles non-Kasm braces — see the
+  ## header comment in the script before changing its brace escaping.
   autoscale_agent_userdata = {
     for region in local.all_regions : region =>
     templatefile("${local.userdata_dir}/${var.agent_userdata_file}", {

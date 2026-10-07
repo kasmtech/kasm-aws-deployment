@@ -1,8 +1,20 @@
 #!/bin/bash
 #
-# One-shot Aurora RDS preseed for Kasm. Designed to run on an ephemeral EC2
-# launched with `instance_initiated_shutdown_behavior = terminate`. Exits 0
-# without re-seeding if the cluster has already been initialized.
+# One-shot Aurora RDS preseed / upgrade for Kasm. Designed to run on an
+# ephemeral EC2 launched with `instance_initiated_shutdown_behavior = terminate`.
+#
+# Two modes, selected by UPGRADE_REMOTE_DB:
+#   init    (default) — run the installer's init_remote_db role against a
+#             virgin cluster. Exits 0 without re-seeding if the sentinel table
+#             is already present.
+#   upgrade — the documented remote-database upgrade flow
+#             (https://docs.kasm.com/docs/tutorials/install/remote-database):
+#               1. bin/utils/db_backup the existing database (uploaded to S3 as well)
+#               2. install.sh --role init_remote_db with the NEW release
+#               3. bin/utils/db_restore the backup over the fresh schema
+#               4. bin/utils/db_upgrade to migrate it to the new release
+#             Refuses to run against an uninitialized cluster, and skips if the
+#             marker table already records the target release.
 #
 # Required template variables (rendered by Terraform):
 #   AWS_REGION             - region SM secrets and SSM parameter live in
@@ -18,10 +30,15 @@
 #   SM_USER_CRED_ID        - SM secret name with {username, password} for kasm user
 #   SM_ADMIN_CRED_ID       - SM secret name with {username, password} for kasm admin
 #   SSM_STATUS_PARAM_NAME  - SSM parameter to write success marker into
+#   KASM_VERSION           - Kasm release version; install base is /opt/kasm/<version>
+#   UPGRADE_REMOTE_DB      - "true" = upgrade mode, anything else = init mode
+#   UPGRADE_BACKUP_S3_PREFIX - key prefix in PRESEED_S3_BUCKET for pre-upgrade backups
 #   VPC_DNS_IP             - VPC CIDR-based DNS resolver (e.g., 10.0.0.2) — routable
 #                            from inside Docker bridge containers (link-local isn't)
 
 FORCE_INIT='${FORCE_DB_INIT}'
+UPGRADE_MODE='${UPGRADE_REMOTE_DB}'
+KASM_DB_USER='kasmapp'   # application role created by the installer (install.sh default)
 
 set -euo pipefail
 
@@ -150,7 +167,40 @@ if [ "$KASM_DB_PRESENT" = "t" ]; then
     "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'kasm_init_marker')")
 fi
 
-if [ "$SENTINEL_PRESENT" = "t" && "$FORCE_INIT" = "false" ]; then
+if [[ "$UPGRADE_MODE" == "true" ]]; then
+  ## Upgrade mode: the database MUST already be initialized. Refuse to run
+  ## against a virgin cluster — that is what init mode is for.
+  if [[ "$SENTINEL_PRESENT" != "t" ]]; then
+    echo "[$(date -Iseconds)] FATAL: upgrade requested but ${DB_NAME}.kasm_init_marker is absent — run init first"
+    aws ssm put-parameter \
+      --region "${AWS_REGION}" \
+      --name "${SSM_STATUS_PARAM_NAME}" \
+      --value "failed:upgrade-no-sentinel:$(date -Iseconds)" \
+      --type String \
+      --overwrite >/dev/null
+    exit 1
+  fi
+
+  ## Idempotency: the marker table records the release each init/upgrade ran
+  ## against. If the newest row already says ${KASM_VERSION}, this upgrade has
+  ## been done — exit 0 unless forced. The kasm_version column only exists on
+  ## markers written by this version of the script or later; on older markers
+  ## the query errors and we fall through to the upgrade.
+  MARKER_VERSION=$(psql -h "${DB_HOSTNAME}" -p "${DB_PORT}" -U "${RDS_MASTER_USER}" -d "${DB_NAME}" -tAc \
+    "SELECT kasm_version FROM kasm_init_marker WHERE kasm_version IS NOT NULL ORDER BY initialized_at DESC LIMIT 1" 2>/dev/null || true)
+  if [[ "$MARKER_VERSION" == "${KASM_VERSION}" && "$FORCE_INIT" == "false" ]]; then
+    echo "[$(date -Iseconds)] kasm_init_marker already records ${KASM_VERSION} — skipping upgrade"
+    aws ssm put-parameter \
+      --region "${AWS_REGION}" \
+      --name "${SSM_STATUS_PARAM_NAME}" \
+      --value "skipped:already-upgraded:${KASM_VERSION}:$(date -Iseconds)" \
+      --type String \
+      --overwrite >/dev/null
+    shutdown -h now
+    exit 0
+  fi
+  echo "[$(date -Iseconds)] upgrade mode: marker version='$MARKER_VERSION' target='${KASM_VERSION}' force=$FORCE_INIT"
+elif [[ "$SENTINEL_PRESENT" == "t" && "$FORCE_INIT" == "false" ]]; then
   echo "[$(date -Iseconds)] kasm_init_marker present — skipping installer (already initialized)"
   aws ssm put-parameter \
     --region "${AWS_REGION}" \
@@ -285,7 +335,81 @@ fi
 echo "[$(date -Iseconds)] resolved ${DB_HOSTNAME} -> $DB_HOST_IP (passing IP to installer)"
 
 ##############################################################################
+## Upgrade step 1: back up the existing database BEFORE install.sh wipes it,
+## using the new release's bin/utils/db_backup exactly as the Kasm docs show.
+##
+## db_backup's --path must point at an installed Kasm tree: it reads the DB
+## image from <path>/docker/.conf/docker-compose-db.yaml and the DB password
+## from <path>/conf/app/api/api.app.config.yaml. No such tree exists yet (the
+## installer that creates /opt/kasm/<version> is also what wipes the DB, and
+## its --no-db-init flag is overridden for the init_remote_db role). So stage
+## just those two files from the release tarball the same way install.sh does
+## (cp docker/*.yaml -> docker/.conf/, write the password into the api config)
+## and point --path at the staging dir. It is removed right after the dump.
+##
+## The backup is also copied to S3 — the EC2 self-terminates, so a backup that
+## only lives on its root volume is useless if the restore fails.
+##############################################################################
+BACKUP_DIR="/tmp/backups"
+BACKUP_FILE=""
+if [[ "$UPGRADE_MODE" == "true" ]]; then
+  ## Markers created before the OWNER TO fix are owned by the RDS master user,
+  ## which makes pg_dump as kasmapp fail with "permission denied for table
+  ## kasm_init_marker". Hand it over before dumping.
+  psql -h "${DB_HOSTNAME}" -p "${DB_PORT}" -U "${RDS_MASTER_USER}" -d "${DB_NAME}" \
+    -c "ALTER TABLE IF EXISTS public.kasm_init_marker OWNER TO $KASM_DB_USER;"
+
+  KASM_RELEASE_DIR="$INSTALL_DIR/kasm_release"
+  YQ="$KASM_RELEASE_DIR/bin/utils/yq_$(uname -m)"
+  BACKUP_STAGE="$INSTALL_DIR/db_backup_stage"
+  mkdir -p -m 700 "$BACKUP_STAGE/docker/.conf" "$BACKUP_STAGE/conf/app/api"
+  cp "$KASM_RELEASE_DIR"/docker/*.yaml "$BACKUP_STAGE/docker/.conf/"
+  cp "$KASM_RELEASE_DIR/conf/app/api/api.app.config.yaml" "$BACKUP_STAGE/conf/app/api/api.app.config.yaml"
+  chmod 600 "$BACKUP_STAGE/conf/app/api/api.app.config.yaml"
+  DB_PASS_FOR_YQ="$KASM_DB_PASS" "$YQ" -i '.database.password = strenv(DB_PASS_FOR_YQ)' \
+    "$BACKUP_STAGE/conf/app/api/api.app.config.yaml"
+
+  ## db_backup bind-mounts this directory into the kasmweb/postgres container
+  ## and pg_dump writes the tar as the image's postgres user (uid 70, see the
+  ## `chown $${KASM_DB_UID:=70}` fallback in bin/utils/db_restore). A root-owned
+  ## 0755 directory therefore fails with "could not open TOC file ... Permission
+  ## denied". World-writable with the sticky bit so uid 70 can create the file.
+  ## (db_backup's `id kasm` warnings are harmless: no kasm user exists on this
+  ## ephemeral host and KASM_UID/GID are only used by its local-container path.)
+  install -d -m 1777 "$BACKUP_DIR"
+  BACKUP_FILE="pre-${KASM_VERSION}-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-kasm_db_backup.tar"
+
+  echo "[$(date -Iseconds)] backing up ${DB_NAME} via db_backup -> $BACKUP_DIR/$BACKUP_FILE"
+  bash "$KASM_RELEASE_DIR/bin/utils/db_backup" \
+    --backup-file "$BACKUP_DIR/$BACKUP_FILE" \
+    --database-hostname "$DB_HOST_IP" \
+    --database-user "$KASM_DB_USER" \
+    --database-name "${DB_NAME}" \
+    --exclude-logs \
+    --path "$BACKUP_STAGE"
+  rm -rf "$BACKUP_STAGE"
+
+  if [ ! -s "$BACKUP_DIR/$BACKUP_FILE" ]; then
+    echo "[$(date -Iseconds)] FATAL: pre-upgrade backup missing or empty — refusing to continue"
+    aws ssm put-parameter \
+      --region "${AWS_REGION}" \
+      --name "${SSM_STATUS_PARAM_NAME}" \
+      --value "failed:upgrade-backup:$(date -Iseconds)" \
+      --type String \
+      --overwrite >/dev/null
+    exit 1
+  fi
+
+  echo "[$(date -Iseconds)] uploading backup to s3://${PRESEED_S3_BUCKET}/${UPGRADE_BACKUP_S3_PREFIX}/$BACKUP_FILE"
+  aws s3 cp "$BACKUP_DIR/$BACKUP_FILE" "s3://${PRESEED_S3_BUCKET}/${UPGRADE_BACKUP_S3_PREFIX}/$BACKUP_FILE"
+fi
+
+##############################################################################
 ## Run the Kasm installer with the init_remote_db role.
+## In upgrade mode this is step 2 of the documented flow: it lays down
+## /opt/kasm/${KASM_VERSION} (configs pointed at the remote DB, service
+## images pulled) and re-seeds the schema from the NEW release. The restore
+## below then puts the customer's data back on top of it.
 ## Flags reference (matches the original kasm-aws db role wiring):
 ##   -S init_remote_db   Kasm role
 ##   -e                  accept EULA
@@ -321,6 +445,43 @@ bash kasm_release/install.sh \
   < <(yes)
 
 ##############################################################################
+## Upgrade steps 3 + 4: restore the pre-upgrade backup over the fresh schema,
+## then run the alembic migration. Both utilities come from the release that
+## install.sh just laid down, and both take the install path so they can read
+## the DB image name and the api config (mounted into the migration container
+## as /opt/kasm/current — no host-side symlink needed).
+##
+## The master password is passed on the command line because db_restore
+## accepts it no other way; the host is ephemeral and the log is local only.
+##############################################################################
+KASM_INSTALL_BASE="/opt/kasm/${KASM_VERSION}"
+MARKER_INITIALIZER='kasm-aws-tofu-remote-db-init'
+if [[ "$UPGRADE_MODE" == "true" ]]; then
+  if [ ! -x "$KASM_INSTALL_BASE/bin/utils/db_restore" ] || [ ! -x "$KASM_INSTALL_BASE/bin/utils/db_upgrade" ]; then
+    echo "[$(date -Iseconds)] FATAL: $KASM_INSTALL_BASE missing db_restore/db_upgrade — does KASM_VERSION match KASM_DOWNLOAD_URL?"
+    exit 1
+  fi
+
+  echo "[$(date -Iseconds)] restoring $BACKUP_FILE into ${DB_NAME}"
+  bash "$KASM_INSTALL_BASE/bin/utils/db_restore" \
+    --accept-warning \
+    --backup-file "$BACKUP_DIR/$BACKUP_FILE" \
+    --database-hostname "$DB_HOST_IP" \
+    --path "$KASM_INSTALL_BASE" \
+    --database-master-user "${RDS_MASTER_USER}" \
+    --database-master-password "$RDS_MASTER_PASS" \
+    --database-user "$KASM_DB_USER" \
+    --database-name "${DB_NAME}"
+
+  echo "[$(date -Iseconds)] running schema migration to ${KASM_VERSION}"
+  bash "$KASM_INSTALL_BASE/bin/utils/db_upgrade" \
+    --database-hostname "$DB_HOST_IP" \
+    --path "$KASM_INSTALL_BASE"
+
+  MARKER_INITIALIZER='kasm-aws-tofu-remote-db-upgrade'
+fi
+
+##############################################################################
 ## Mark success in two places:
 ##   1. kasm_init_marker table — defensive guard against repeat seeding even
 ##      under TF state loss / taint.
@@ -331,17 +492,29 @@ psql -h "${DB_HOSTNAME}" -p "${DB_PORT}" -U "${RDS_MASTER_USER}" -d "${DB_NAME}"
 CREATE TABLE IF NOT EXISTS kasm_init_marker (
   id              SERIAL PRIMARY KEY,
   initialized_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  initializer     TEXT NOT NULL DEFAULT 'kasm-aws-tofu-remote-db-init'
+  initializer     TEXT NOT NULL DEFAULT 'kasm-aws-tofu-remote-db-init',
+  kasm_version    TEXT
 );
-INSERT INTO kasm_init_marker DEFAULT VALUES;
+-- Older markers (and the one restored from a pre-upgrade backup) predate
+-- the version column; add it so the upgrade idempotency check can read it.
+ALTER TABLE kasm_init_marker ADD COLUMN IF NOT EXISTS kasm_version TEXT;
+-- Hand the table to the application role. Every other table is owned by
+-- kasmapp (created by the installer); if this one stays owned by the RDS
+-- master user, Kasm's db_backup (pg_dump as kasmapp) fails with
+-- "permission denied for table kasm_init_marker". The SERIAL sequence
+-- follows the table on OWNER TO.
+ALTER TABLE kasm_init_marker OWNER TO $KASM_DB_USER;
+INSERT INTO kasm_init_marker (initializer, kasm_version) VALUES ('$MARKER_INITIALIZER', '${KASM_VERSION}');
 SQL
 
+STATUS_VALUE="success:$(date -Iseconds)"
+[[ "$UPGRADE_MODE" == "true" ]] && STATUS_VALUE="upgraded:${KASM_VERSION}:$(date -Iseconds)"
 aws ssm put-parameter \
   --region "${AWS_REGION}" \
   --name "${SSM_STATUS_PARAM_NAME}" \
-  --value "success:$(date -Iseconds)" \
+  --value "$STATUS_VALUE" \
   --type String \
   --overwrite >/dev/null
 
-echo "[$(date -Iseconds)] remote-db-init succeeded — shutting down for self-termination"
+echo "[$(date -Iseconds)] remote-db-$([[ "$UPGRADE_MODE" == "true" ]] && echo upgrade || echo init) succeeded — shutting down for self-termination"
 shutdown -h now

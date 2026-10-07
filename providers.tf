@@ -1,9 +1,9 @@
 terraform {
-  required_version = "= 1.11.10"
+  required_version = "~> 1.11"
   backend "s3" {
     bucket  = var.backend_bucket
-    key     = "aws/${local.standard_customer_name}/${local.current_folder}/terraform.tfstate"
-    region  = "us-east-2"
+    key     = "aws/${local.standard_customer_name}/terraform.tfstate"
+    region  = var.backend_bucket_region
     profile = var.aws_profile
   }
 
