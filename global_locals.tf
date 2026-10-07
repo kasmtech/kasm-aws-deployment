@@ -133,14 +133,14 @@ locals {
   ## Private DNS domain name
   private_domain = "private.${var.kasm_domain_name}"
 
-  ## Full file path for "Managed_By" tag variable
+  ## Current folder name (standard local)
   full_path_list = split("/", abspath(path.module))
   current_folder = element(local.full_path_list, length(local.full_path_list) - 1)
   userdata_dir   = var.userdata_dir != "" ? var.userdata_dir : "${path.module}/userdata"
 
   aws_default_tags = merge({
     Deployed_by     = "Terraform"
-    Managed_by      = local.current_folder
+    Managed_by      = var.managed_by
     Project_name    = local.standard_customer_name
     Deployment_type = var.deployment_type
     Customer_name   = local.standard_customer_name

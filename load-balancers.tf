@@ -194,7 +194,7 @@ module "public_load_balancers" {
   https_listener_rules = contains(local.webapp_placement_regions, each.key) ? local.public_lb_https_listener_rules_by_placement[each.key] : {}
   name                 = "${each.key}-public-lb"
   security_groups      = [module.vpc[each.key].security_group_ids["public-lb-security-group"]]
-  ssl_policy           = "ELBSecurityPolicy-2016-08"
+  ssl_policy           = var.public_lb_ssl_policy
   subnets              = local.public_lb_subnet_ids[each.key]
   target_groups_new    = local.public_lb_target_groups_new[each.key]
   vpc_id               = module.vpc[each.key].vpc_id

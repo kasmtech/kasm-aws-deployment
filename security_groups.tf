@@ -486,7 +486,7 @@ locals {
             from_port   = 443
             to_port     = 443
             cidr_blocks = [""]
-            source_sgid = module.vpc[var.primary_region].security_group_ids["${region}-webapp-security-group"]
+            source_sgid = module.vpc[var.primary_region].security_group_ids["webapp-security-group"]
           },
           {
             key         = "ssh-from-bastion"

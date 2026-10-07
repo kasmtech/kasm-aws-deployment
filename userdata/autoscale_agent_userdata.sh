@@ -1,5 +1,29 @@
 #!/bin/bash
-
+#
+# NOTE ON BRACES - this file is intentionally NOT valid Bash as written.
+#
+# It is rendered twice before it runs on an agent:
+#   1. OpenTofu templatefile() in compute.tf substitutes the Tofu variables and
+#      collapses the Tofu escapes: a doubled dollar sign becomes a single one,
+#      and a doubled percent sign (the curl write-out lines) becomes a single
+#      one.
+#   2. Kasm AutoScale, at instance-launch time, substitutes the single-brace
+#      Kasm placeholders (manager_token, upstream_auth_address, server_id,
+#      provider_name, server_external_fqdn) using Python str.format semantics,
+#      which collapses every doubled brace into a single brace.
+#
+# Kasm therefore requires every brace that is NOT a Kasm placeholder to be
+# doubled. Upstream wording (kasmtech/workspaces-autoscale-startup-scripts,
+# docker_agents/README.md, "Escaping Brackets"): "If your script uses curly
+# brackets, aside from Kasm variables, you must escape them by doubling them
+# up." Combined with the Tofu dollar escape, that is why shell expansions in
+# this file look like dollar-dollar-brace-brace-NAME-brace-brace and function
+# bodies open and close with doubled braces.
+#
+# Do not "fix" the doubled braces, and do not run bash -n on this file
+# directly. To validate: render with templatefile(), apply Python .format()
+# with dummy values for the Kasm placeholders, then run bash -n on the result.
+#
 set -euo pipefail
 
 export NEEDRESTART_MODE=l

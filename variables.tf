@@ -27,6 +27,17 @@ variable "backend_bucket" {
   type        = string
 }
 
+variable "backend_bucket_region" {
+  description = "The AWS region of the backend bucket that contains the state file"
+  type        = string
+  default     = "us-east-2"
+
+  validation {
+    condition     = can(regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]$", var.backend_bucket_region))
+    error_message = "backend_bucket_region must be a valid AWS region name, e.g. us-east-2."
+  }
+}
+
 #######################################
 ##                                   ##
 ##   Customer Deployment Variables   ##
@@ -227,6 +238,17 @@ variable "lb_zone_config_file" {
   default     = "lb_zone_config.json"
 }
 
+variable "public_lb_ssl_policy" {
+  description = "TLS security policy for the public ALB HTTPS listeners"
+  type        = string
+  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  validation {
+    condition     = can(regex("^ELBSecurityPolicy-", var.public_lb_ssl_policy))
+    error_message = "public_lb_ssl_policy must be an AWS ELB security policy name (ELBSecurityPolicy-*)."
+  }
+}
+
 variable "http_redirect_rule_action" {
   description = "Public Load Balancer HTTP redirect rule action"
   type = object({
@@ -327,6 +349,17 @@ variable "freeform_tags" {
   description = "Additional tags to add to Terraform-deployed Kasm services (beyond those in locals.tf file)"
   type        = map(any)
   default     = null
+}
+
+variable "managed_by" {
+  description = "Value of the Managed_by tag applied to all AWS resources (e.g. the tool or wrapper that drives this module)"
+  type        = string
+  default     = "opentofu"
+
+  validation {
+    condition     = can(regex("^[\\w .:/=+@-]{1,256}$", var.managed_by))
+    error_message = "The managed_by variable must be 1-256 characters of letters, numbers, spaces, or _ . : / = + - @ (AWS tag value rules)."
+  }
 }
 
 variable "generate_db_preseed" {
@@ -602,8 +635,14 @@ variable "run_remote_db_init" {
   default     = false
 }
 
+variable "run_remote_db_upgrade" {
+  description = "Operator gate for the one-shot Aurora upgrade job. Set to true (with run_remote_db_init = false) after bumping kasm_version / kasm_download_url to the target release; flip back to false once the SSM status parameter reads 'upgraded:<version>:...'. The ephemeral host backs up the database (local + S3), runs the new release's init_remote_db role, restores the backup, then runs db_upgrade. Requires var.use_rds = true. Mutually exclusive with run_remote_db_init."
+  type        = bool
+  default     = false
+}
+
 variable "force_remote_db_init" {
-  description = "Whether or not to force the DB to initilize "
+  description = "Whether or not to force the DB to initilize. In upgrade mode, forces the upgrade even if kasm_init_marker already records the target release."
   type        = bool
   default     = false
 }
@@ -616,6 +655,17 @@ variable "remote_db_init_instance_type" {
   validation {
     condition     = can(regex("^[a-z0-9]+\\.[a-z0-9]+$", var.remote_db_init_instance_type))
     error_message = "remote_db_init_instance_type must be a valid EC2 instance type (e.g. t3.small, m6i.large)."
+  }
+}
+
+variable "remote_db_init_root_volume_size" {
+  description = "Root EBS volume size in GiB for the ephemeral Aurora init/upgrade host. Upgrade mode stages a full pg_dump of the Kasm database on local disk before uploading it to S3, so size this above the largest expected backup. 50 GiB covers most deployments; raise it for large session/log histories."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.remote_db_init_root_volume_size >= 8 && var.remote_db_init_root_volume_size <= 16384
+    error_message = "remote_db_init_root_volume_size must be between 8 and 16384 GiB (EBS gp3 limits; 8 GiB is the minimum for the Ubuntu AMI)."
   }
 }
 
@@ -672,6 +722,8 @@ variable "aws_to_kasm_zone_map" {
 variable "kasm_download_url" {
   description = "The URL for the Kasm Workspaces build"
   type        = string
+  # Module-specific default, locked to the release tag; override per deployment via tfvars.
+  default = "https://kasm-static-content.s3.us-east-1.amazonaws.com/kasm_release_1.19.0.tar.gz"
 }
 
 variable "kasm_stig_url" {
@@ -683,6 +735,8 @@ variable "kasm_stig_url" {
 variable "kasm_version" {
   description = "The version of Kasm to install"
   type        = string
+  # Module-specific default, locked to the release tag; override per deployment via tfvars.
+  default = "1.19.0"
 }
 
 ##############################

@@ -69,9 +69,20 @@ variable "resource_name_prefix" {
   type        = string
 }
 
+variable "root_volume_size" {
+  description = "Root EBS volume size in GiB for the ephemeral init host. Upgrade mode keeps a full pg_dump of the Kasm database on local disk before uploading it to S3, so size this for the largest expected backup plus the release tarball and Docker images."
+  type        = number
+}
+
 variable "run_remote_db_init" {
   description = "Operator gate for the one-shot Aurora preseed job. Combined with var.use_rds to determine whether the EC2/IAM stack is created on this apply."
   type        = bool
+}
+
+variable "run_remote_db_upgrade" {
+  description = "Operator gate for the one-shot Aurora upgrade job. Launches the same ephemeral EC2 as run_remote_db_init but in upgrade mode: back up the existing database (local + S3), run the new release's init_remote_db role, restore the backup, then run db_upgrade. Mutually exclusive with run_remote_db_init. The target release is var.kasm_version / var.kasm_download_url."
+  type        = bool
+  default     = false
 }
 
 variable "security_group_id" {

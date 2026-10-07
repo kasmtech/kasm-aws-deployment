@@ -18,6 +18,22 @@ data "aws_iam_policy_document" "this" {
     ]
   }
 
+  ## Upgrade mode only: the pre-upgrade pg_dump is copied to S3 so it outlives
+  ## the self-terminating EC2. Scoped to the upgrades/ prefix; no reads/deletes.
+  dynamic "statement" {
+    for_each = var.run_remote_db_upgrade ? [1] : []
+    content {
+      sid    = "WritePreUpgradeBackupToS3"
+      effect = "Allow"
+      actions = [
+        "s3:PutObject"
+      ]
+      resources = [
+        "arn:aws:s3:::${var.db_backup_bucket_name}/${local.upgrade_backup_s3_prefix}/*"
+      ]
+    }
+  }
+
   statement {
     sid    = "ReadKasmCredentialsFromSM"
     effect = "Allow"
@@ -47,7 +63,7 @@ resource "aws_iam_policy" "this" {
   count = local.run_remote_db_init ? 1 : 0
 
   name        = "${var.resource_name_prefix}-remote-db-init"
-  description = "Least-privilege policy for the one-shot Aurora preseed EC2. Allows reading the preseed YAML from S3, fetching Kasm credentials from Secrets Manager, and writing the success marker to SSM Parameter Store."
+  description = "Least-privilege policy for the one-shot Aurora preseed/upgrade EC2. Allows reading the preseed YAML from S3, fetching Kasm credentials from Secrets Manager, writing the success marker to SSM Parameter Store, and (upgrade mode only) uploading the pre-upgrade DB backup to S3."
   policy      = data.aws_iam_policy_document.this[0].json
 }
 
