@@ -4,7 +4,8 @@
 #   fmt/validate  — formatting + config validity
 #   boundary      — FR-7 gate: fail if any Kasm-internal value/pattern is present
 #                   (this repo is the public-safe, customer-deliverable artifact)
-#   publish       — publish to the GitLab Terraform Module Registry on any git tag
+#   publish       — publish to the GitLab Terraform Module Registry on bare semver
+#                   tags (1.2.3, 1.2.3-1); tags with a `v` prefix are NOT published
 #                   so the parent wrapper (kasm-aws-multi-region-tf) can consume
 #                   it as gitlab.com/kasm-technologies/kasm-aws-deployment/aws.
 # ---------------------------------------------------------------------------
@@ -50,7 +51,9 @@ boundary_check:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
-# Publish to the GitLab Terraform Module Registry on any git tag (1.2.3 or v1.2.3).
+# Publish to the GitLab Terraform Module Registry on a bare semver tag (1.2.3 or
+# 1.2.3-1). The tag is used verbatim as the module version; `v`-prefixed tags
+# (v1.2.3) do not match the rule and are not published.
 # Reference pattern: kasm-oci-multi-region-tf/.gitlab-ci.yml (publish_addon_module).
 publish_module:
   stage: publish
@@ -61,12 +64,10 @@ publish_module:
     TERRAFORM_MODULE_SYSTEM: aws
   script:
     - TERRAFORM_MODULE_NAME=$(echo "${TERRAFORM_MODULE_NAME}" | tr " _" -)
-    # The registry rejects a leading `v`, so a `v1.0.0` tag publishes as `1.0.0`;
-    # a bare `1.0.0` tag is used as-is.
-    - TERRAFORM_MODULE_VERSION="${CI_COMMIT_TAG#v}"
+    - TERRAFORM_MODULE_VERSION="${CI_COMMIT_TAG}"
     - tar -vczf /tmp/${TERRAFORM_MODULE_NAME}-${TERRAFORM_MODULE_SYSTEM}-${TERRAFORM_MODULE_VERSION}.tgz -C ${TERRAFORM_MODULE_DIR} --exclude=./.git .
     - 'curl --fail-with-body --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}"
          --upload-file /tmp/${TERRAFORM_MODULE_NAME}-${TERRAFORM_MODULE_SYSTEM}-${TERRAFORM_MODULE_VERSION}.tgz
          ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/terraform/modules/${TERRAFORM_MODULE_NAME}/${TERRAFORM_MODULE_SYSTEM}/${TERRAFORM_MODULE_VERSION}/file'
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+/
