@@ -1,0 +1,106 @@
+## Example inputs for running this repository directly as a root module.
+## Copy to terraform.tfvars, fill in the values, then:
+##   tofu init && tofu plan && tofu apply
+## Every input and its default is documented in variables.tf; only the common
+## ones are listed here.
+
+#######################################
+##                                   ##
+##      AWS Provider Variables       ##
+##                                   ##
+#######################################
+
+## AWS CLI profile used for every region (and the parent DNS zone, see below)
+aws_profile = "default"
+
+## Existing S3 bucket and region for OpenTofu state. The state key is
+## aws/<customer_name>/terraform.tfstate.
+backend_bucket        = "example-tofu-state"
+backend_bucket_region = "us-east-1"
+
+#######################################
+##                                   ##
+##     Kasm Deployment Variables     ##
+##                                   ##
+#######################################
+
+customer_name   = "Example Corp"
+deployment_type = "Multi-Region"
+
+## Kasm release to install. Both default to the release this module is tested with.
+# kasm_version      = "1.19.0"
+# kasm_download_url = "https://kasm-static-content.s3.us-east-1.amazonaws.com/kasm_release_1.19.0-latest.tar.gz"
+
+## Regions: the primary gets the database and webapps; secondary regions get
+## agents and connection proxies.
+primary_region    = "us-east-1"
+secondary_regions = []
+
+## Kasm zone name for each region (primary_region + secondary_regions)
+aws_to_kasm_zone_map = {
+  us-east-1 = "USA-(Virginia)"
+}
+
+number_of_availability_zones = 2
+
+#######################################
+##                                   ##
+##           DNS Variables           ##
+##                                   ##
+#######################################
+
+kasm_domain_name = "kasm.example.com"
+
+## Create a public hosted zone for kasm_domain_name. To delegate it from an
+## existing parent zone, set parent_dns_zone_name (and dns_aws_profile if the
+## parent zone lives in another account).
+create_route53_zone  = true
+parent_dns_zone_name = ""
+# dns_aws_profile    = "default"
+
+#######################################
+##                                   ##
+##      Kasm Password Variables      ##
+##                                   ##
+#######################################
+
+## Any kasm_* password or token left empty is generated and stored in AWS
+## Secrets Manager in the primary region.
+generate_passwords = true
+
+#######################################
+##                                   ##
+##        Security Variables         ##
+##                                   ##
+#######################################
+
+## Restrict these for production; both default to 0.0.0.0/0.
+public_web_access_ips  = ["198.51.100.0/24"]
+public_ssh_ingress_ips = ["198.51.100.10/32"]
+
+deploy_waf     = true
+waf_bypass_ips = ["198.51.100.10/32"]
+
+#######################################
+##                                   ##
+##        Database Variables         ##
+##                                   ##
+#######################################
+
+## false = single EC2 database instance; true = Aurora PostgreSQL
+use_rds = false
+
+## Existing S3 bucket in primary_region for DB backups and the generated
+## default_properties.yaml. The module grants access to it but does not create it.
+db_backup_bucket_name = "example-kasm-db-backups"
+
+#######################################
+##                                   ##
+##       VM Compute Variables        ##
+##                                   ##
+#######################################
+
+# webapp_instance_type = "t8i.medium"
+# agent_instance_type  = "t3.medium"
+# db_instance_type     = "t3.medium"
+# db_block_volume_size = 100

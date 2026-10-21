@@ -35,11 +35,11 @@ module "db_backup_role" {
 
   role_name             = "${var.resource_name_prefix}-db-backup-role"
   instance_profile_name = "${var.resource_name_prefix}-db-backup-role"
-  policy_arns = {
+  policy_arns = merge({
     AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
     db_backup                    = aws_iam_policy.db_backup.arn
     kasminit                     = var.kasminit_policy_arn
-  }
+  }, var.extra_policy_arns)
 }
 
 resource "aws_ebs_volume" "db_block_device" {

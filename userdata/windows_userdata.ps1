@@ -2,7 +2,7 @@
 #ps1_sysnative
 
 $StartupScriptArchive = "kasm-windows-startup.zip"
-$StartupScriptUrl = "https://kasmweb-build-artifacts.s3.amazonaws.com/kasm-autoscale-scripts/1.18.1/$StartupScriptArchive"
+$StartupScriptUrl = "https://kasmweb-build-artifacts.s3.amazonaws.com/kasm-autoscale-scripts/1.19.0/$StartupScriptArchive"
 $WorkingDirectory = "$($Env:Temp)"
 $InitScript = "$WorkingDirectory\Init-VM-Task.ps1"
 $ProgressPreference = "SilentlyContinue" # improve Invoke-Webrequest performance

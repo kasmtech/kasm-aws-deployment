@@ -245,3 +245,11 @@ locals {
   management_ssh_public_key = module.ssh_keys[var.mgmt_ssh_key].ssh_key_info.public_key
   agent_ssh_public_key      = module.ssh_keys["agent"].ssh_key_info.public_key
 }
+
+## Secrets Manager credential secrets read at boot by caller-supplied userdata
+## (var.userdata_dir) and the one-shot RDS init host.
+locals {
+  sm_system_cred_arn = module.aws_sm_system_creds["${local.standard_customer_name}/other-credential"].secret_arn
+  sm_user_cred_arn   = module.aws_sm_user_creds["${local.standard_customer_name}/user-credential"].secret_arn
+  sm_admin_cred_arn  = module.aws_sm_user_creds["${local.standard_customer_name}/admin-credential"].secret_arn
+}

@@ -4,10 +4,10 @@ locals {
   db_private_hostname    = "database.${local.private_domain}"
 
   database_userdata = base64encode(
-    templatefile("${local.userdata_dir}/${var.db_userdata_file}", {
+    templatefile("${local.userdata_dir}/${var.db_userdata_file}", merge(var.userdata_template_vars, {
       ADDITIONAL_DATABASE_INSTALL_ARGS = var.database_additional_install_arguments
       BACKUP_BUCKET_DIR_NAME           = var.generate_db_preseed ? "aws/${local.standard_customer_name}/" : ""
-      BLOCK_DEVICE                     = "nvme2n1"
+      BLOCK_VOLUME_ID                  = module.db_instance.block_volume_id
       BUCKET_NAME                      = var.db_backup_bucket_name
       BUCKET_NAMESPACE                 = ""
       BUCKET_REGION                    = var.primary_region
@@ -16,9 +16,16 @@ locals {
       CUSTOM_PROPERTIES_FILENAME       = var.generate_db_preseed ? "${var.kasm_version}-default_properties.yaml" : ""
       DB_CONNECTIONS                   = local.allowed_db_connections
       DB_INIT_OVERRIDE                 = "false"
+      DB_UPGRADE                       = var.db_schema_upgrade
       DEPLOYMENT_DOMAIN                = var.kasm_domain_name
       DEPLOYMENT_TYPE                  = var.deployment_type
-      GRAFANA_FULL_METRICS             = "false"
+      DOCKER_LOGIN                     = tostring(var.docker_login)
+      DB_O11Y_PASSWORD                 = local.db_o11y_password
+      SM_ADMIN_CRED_ID                 = local.sm_admin_cred_arn
+      SM_REGION                        = var.primary_region
+      SM_SYSTEM_CRED_ID                = local.sm_system_cred_arn
+      SM_USER_CRED_ID                  = local.sm_user_cred_arn
+      ENHANCED_DB_MONITORING           = tostring(var.enable_enhanced_db_monitoring)
       IMAGE_TYPE                       = var.image_type
       KASM_DOMAIN_NAME                 = var.kasm_domain_name
       KASM_DOWNLOAD_URL                = var.kasm_download_url
@@ -30,16 +37,7 @@ locals {
       KASM_STIG_OVERRIDE               = var.kasm_stig_url
       KASM_VERSION                     = var.kasm_version
       PRIVATE_IP                       = local.db_private_hostname
-      TELEPORT_VERSION                 = var.teleport_version
-      WAZUH_JOIN_GROUP                 = var.wazuh_group
-
-      # Vars consumed only by the standalone db script. Originals ignore them; the
-      # standalone script gates pgconfigctl tuning and enhanced monitoring on these
-      # being non-empty, so safe defaults are empty strings / "false".
-      PGCONFIGCTL_SECRET_ID  = ""
-      ENHANCED_DB_MONITORING = "false"
-      DB_O11Y_PASSWORD       = ""
-    })
+    }))
   )
 }
 
@@ -53,6 +51,7 @@ module "db_instance" {
   db_backup_bucket_name = var.db_backup_bucket_name
   db_instance_type      = var.db_instance_type
   kasminit_policy_arn   = aws_iam_policy.kasminit.arn
+  extra_policy_arns     = { kasm_db_creds_read = aws_iam_policy.kasm_db_creds_read.arn }
   resource_name_prefix  = local.resource_name_prefix
   security_group_ids    = [module.vpc[var.primary_region].security_group_ids["database-security-group"]]
   ssh_key_name          = local.mgmt_ssh_key_name
@@ -220,9 +219,9 @@ module "remote_db_init" {
   run_remote_db_init     = var.run_remote_db_init
   run_remote_db_upgrade  = var.run_remote_db_upgrade
   security_group_id      = module.vpc[var.primary_region].security_group_ids["${var.primary_region}-webapp-security-group"]
-  sm_admin_cred_arn      = module.aws_sm_user_creds["${local.standard_customer_name}/admin-credential"].secret_arn
-  sm_system_cred_arn     = module.aws_sm_system_creds["${local.standard_customer_name}/other-credential"].secret_arn
-  sm_user_cred_arn       = module.aws_sm_user_creds["${local.standard_customer_name}/user-credential"].secret_arn
+  sm_admin_cred_arn      = local.sm_admin_cred_arn
+  sm_system_cred_arn     = local.sm_system_cred_arn
+  sm_user_cred_arn       = local.sm_user_cred_arn
   standard_customer_name = local.standard_customer_name
   subnet_id              = local.webapp_subnet_ids[0]
   use_rds                = var.use_rds
@@ -237,6 +236,7 @@ module "remote_db_init" {
   depends_on = [
     module.rds_primary,
     module.custom_properties,
+    aws_s3_object.db_preseed,
     aws_route53_record.database_per_cluster
   ]
 }
@@ -257,12 +257,14 @@ module "remote_db_init" {
 ## The check below pulls the live member list from the global cluster (via the
 ## rds-primary module's `global_cluster_members` output, refreshed each plan)
 ## and warns if any expected DR region's secondary is missing.
+## try(): module.rds_primary is null when use_rds = false (lifecycle.enabled),
+## and HCL evaluates every operand of || plus the error_message regardless.
 check "rds_secondaries_joined_to_global" {
   assert {
     condition = !var.use_rds || length(var.rds_dr_regions) == 0 || alltrue([
       for region in var.rds_dr_regions :
       anytrue([
-        for member in module.rds_primary.global_cluster_members :
+        for member in try(module.rds_primary.global_cluster_members, []) :
         endswith(member.db_cluster_arn, ":cluster:${local.standard_customer_name}-aurora-${region}")
       ])
     ])
@@ -271,12 +273,12 @@ check "rds_secondaries_joined_to_global" {
       jsonencode([
         for region in var.rds_dr_regions : region
         if !anytrue([
-          for member in module.rds_primary.global_cluster_members :
+          for member in try(module.rds_primary.global_cluster_members, []) :
           endswith(member.db_cluster_arn, ":cluster:${local.standard_customer_name}-aurora-${region}")
         ])
       ]),
       local.standard_customer_name,
-      jsonencode([for member in module.rds_primary.global_cluster_members : member.db_cluster_arn])
+      jsonencode([for member in try(module.rds_primary.global_cluster_members, []) : member.db_cluster_arn])
     )
   }
 }

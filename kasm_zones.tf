@@ -99,9 +99,11 @@ locals {
         ## Private TG for "${region}-webapp-priv-tg" is now created inside
         ## module.kasm_zone (aws_lb_target_group.webapp_private). Only the
         ## external (public-side) TGs flow through here.
+        ## lookup(): during `tofu import` only state is evaluated, and a TG not
+        ## yet created is absent from the map; plans always have both keys.
         webapp_target_group_arns = {
-          "${region}-webapp-pub-tg" = local.public_target_group_arns_by_name[local.webapp_placement_resolved[region]]["${region}-webapp-pub-tg"]
-          "webapp-pub-tg"           = local.public_target_group_arns_by_name[local.webapp_placement_resolved[region]]["webapp-pub-tg"]
+          "${region}-webapp-pub-tg" = lookup(local.public_target_group_arns_by_name[local.webapp_placement_resolved[region]], "${region}-webapp-pub-tg", null)
+          "webapp-pub-tg"           = lookup(local.public_target_group_arns_by_name[local.webapp_placement_resolved[region]], "webapp-pub-tg", null)
         }
         webapp_user_data = local.webapp_userdata[region]
       }
@@ -171,8 +173,9 @@ module "kasm_zone" {
   webapp_instance_type         = var.webapp_instance_type
   webapp_name                  = "${local.resource_name_prefix}-${each.value.webapp_name_segment}-webapp-kasm-instance-template"
   webapp_scale_group_settings = {
-    name       = "${local.standard_customer_name}-${each.value.webapp_name_segment}-webapp-asg"
-    subnet_ids = local.webapp_subnet_ids_by_region[local.webapp_placement_resolved[each.key]]
+    name                = "${local.standard_customer_name}-${each.value.webapp_name_segment}-webapp-asg"
+    health_check_period = var.instance_health_check_grace_period
+    subnet_ids          = local.webapp_subnet_ids_by_region[local.webapp_placement_resolved[each.key]]
   }
   webapp_security_group_ids = each.value.webapp_security_group_ids
   webapp_system_role        = "${each.value.webapp_name_segment}-webapp"
@@ -188,7 +191,7 @@ module "kasm_zone" {
     min_size            = 1
     max_size            = 3
     subnet_ids          = local.cpx_subnet_ids[each.value.cpx_provider_region]
-    health_check_period = 300
+    health_check_period = var.instance_health_check_grace_period
     cool_down_period    = 600
     health_check_type   = "ELB"
     min_health_percent  = 50
@@ -207,7 +210,7 @@ module "kasm_zone" {
     min_size            = 2
     max_size            = 5
     subnet_ids          = local.proxy_subnet_ids[each.value.proxy_provider_region]
-    health_check_period = 300
+    health_check_period = var.instance_health_check_grace_period
     cool_down_period    = 600
     health_check_type   = "ELB"
     min_health_percent  = 50

@@ -1,93 +1,94 @@
 # kasm-aws-deployment
 
+OpenTofu module that deploys [Kasm Workspaces](https://kasmweb.com) on AWS: a VPC per
+region, public and private Application Load Balancers (optionally behind AWS WAF), a
+Kasm database (Aurora PostgreSQL Global Database or a single EC2 instance), webapp
+autoscaling groups, optional connection proxies, Route 53 records and ACM certificates,
+and the IAM, Secrets Manager and autoscale configuration Kasm needs to scale agents.
 
+## Requirements
 
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.com/kasm-technologies/engineering/terraform-core/aws/kasm-aws-deployment.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-* [Set up project integrations](https://gitlab.com/kasm-technologies/engineering/terraform-core/aws/kasm-aws-deployment/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+- OpenTofu `~> 1.11`
+- AWS provider `~> 6.0`
+- An S3 bucket for OpenTofu state
+- An S3 bucket in the primary region for DB backups and the generated DB preseed
+  (`db_backup_bucket_name`); the module grants access to it but does not create it
+- Either a Route 53 hosted zone for the Kasm domain or a parent zone to delegate from
+  (`create_route53_zone` / `parent_dns_zone_name`)
 
 ## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+This repository can be deployed on its own as a root module, or called as a module
+from your own configuration.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### Standalone
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Clone the repository, copy the example inputs and fill them in:
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+cp terraform.tfvars.example terraform.tfvars
+tofu init
+tofu plan
+tofu apply
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+`terraform.tfvars.example` lists the required inputs and the common optional ones;
+everything else has a working default. State goes to the S3 backend configured from
+`backend_bucket` / `backend_bucket_region`, under `aws/<customer_name>/terraform.tfstate`.
+Passwords left empty are generated (`generate_passwords = true`), and the DB preseed is
+uploaded to `db_backup_bucket_name` for the database to pick up on first boot.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### As a module
 
-## License
-For open source projects, say how it is licensed.
+```hcl
+module "kasm" {
+  source = "<registry or git source for this module>"
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+  customer_name                = "example"
+  kasm_domain_name             = "kasm.example.com"
+  primary_region               = "us-east-1"
+  secondary_regions            = []
+  backend_bucket               = "example-tofu-state"
+  db_backup_bucket_name        = "example-kasm-db-backups"
+  number_of_availability_zones = 3
+  deploy_waf                   = true
+  waf_bypass_ips               = ["198.51.100.10/32"]
+
+  aws_to_kasm_zone_map = {
+    us-east-1 = "USA-(Virginia)"
+  }
+}
+```
+
+See `variables.tf` for every input and its default, and `outputs.tf` for what the module
+returns (load balancer and target group identifiers, generated credentials, the rendered
+DB preseed, and the autoscale configuration). The `backend "s3"` block only applies when
+this repository is the root module; a calling configuration uses its own backend.
+
+## Credentials
+
+With `generate_passwords = true` (default) the module generates the Kasm passwords and
+tokens and stores them in AWS Secrets Manager in the primary region. Credential outputs
+are marked sensitive; OpenTofu state contains them, so keep state encrypted and
+access-restricted.
+
+## Customising instance bootstrap
+
+Each role's userdata is rendered with `templatefile()` from `userdata_dir` (defaults to
+the scripts bundled in `userdata/`). To supply your own scripts:
+
+- `userdata_dir` and the `*_userdata_file` inputs select the scripts.
+- `userdata_template_vars` adds template variables your scripts need that this module
+  does not define.
+- `kasminit_secret_arns` / `kasminit_kms_key_arns` let the instance roles read additional
+  Secrets Manager secrets at boot. The deployment's own system-credentials secret is
+  always readable.
+
+## DB preseed
+
+With `generate_db_preseed = true` (default) the module renders a `default_properties.yaml`
+that seeds the Kasm database and uploads it to
+`s3://<db_backup_bucket_name>/aws/<customer>/<kasm_version>-default_properties.yaml`.
+Set `upload_db_preseed = false` if your configuration stores it elsewhere; the content is
+available from the `default_properties_yaml` output. Extra Kasm API accounts can be seeded
+through `api_preseeds`; a password is generated for each.

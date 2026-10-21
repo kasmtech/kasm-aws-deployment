@@ -5,15 +5,15 @@
 #######################################
 
 variable "aws_profile" {
-  description = "The AWS profile to use to be used to authenticate against AWS with."
+  description = "The AWS CLI profile used to authenticate against AWS"
   type        = string
-  default     = "prod"
+  default     = "default"
 }
 
 variable "dns_aws_profile" {
-  description = "The AWS profile to use to be used to authenticate against AWS with."
+  description = "The AWS CLI profile used to manage the parent DNS zone (may differ from aws_profile when the parent zone lives in another account)"
   type        = string
-  default     = "prod"
+  default     = "default"
 }
 
 variable "dns_aws_region" {
@@ -313,6 +313,17 @@ variable "proxy_health_check" {
   }
 }
 
+variable "instance_health_check_grace_period" {
+  description = "Seconds the webapp, CPX and proxy autoscaling groups wait after launch before ELB health checks can mark an instance unhealthy. Must cover the full userdata bootstrap (Kasm install, hardening, OS update) plus the target group's healthy threshold, or new instances are replaced before they finish booting."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.instance_health_check_grace_period >= 300
+    error_message = "The instance_health_check_grace_period must be at least 300 seconds."
+  }
+}
+
 variable "webapp_health_check" {
   description = "Kasm API Webapp Load Balancer healthcheck"
   type = object({
@@ -368,10 +379,16 @@ variable "generate_db_preseed" {
   default     = true
 }
 
-variable "generate_passwords" {
-  description = "Automatically generate Kasm passwords"
+variable "upload_db_preseed" {
+  description = "Upload the generated default_properties.yaml to db_backup_bucket_name (key aws/<customer>/<kasm_version>-default_properties.yaml), where the DB reads it at first boot. Disable only when a wrapper uploads it instead."
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "generate_passwords" {
+  description = "Generate any Kasm password or token whose kasm_* input is left empty. Set false only when every credential is supplied."
+  type        = bool
+  default     = true
 }
 
 variable "deploy_nfs" {
@@ -399,9 +416,8 @@ variable "s3_storage_provider" {
 }
 
 variable "db_backup_bucket_name" {
-  description = "Backup directory to use for automated Kasm DB backups and upload to s3 bucket. Different folders are used to separate DB backups from one another."
+  description = "Name of an existing S3 bucket for automated Kasm DB backups (and the rendered DB preseed when generate_db_preseed = true). The module grants the DB role access to it but does not create it."
   type        = string
-  default     = "kasm-aws-db-backup-bucket"
 }
 
 variable "s3_profile_bucket_base_name" {
@@ -641,6 +657,12 @@ variable "run_remote_db_upgrade" {
   default     = false
 }
 
+variable "db_schema_upgrade" {
+  description = "VM database only (use_rds = false): run the Kasm database schema upgrade (db-post.sh -u) when the DB instance's userdata runs. Set to true for the apply that rebuilds the DB on a newer kasm_version; the RDS equivalent is run_remote_db_upgrade."
+  type        = bool
+  default     = false
+}
+
 variable "force_remote_db_init" {
   description = "Whether or not to force the DB to initilize. In upgrade mode, forces the upgrade even if kasm_init_marker already records the target release."
   type        = bool
@@ -723,7 +745,7 @@ variable "kasm_download_url" {
   description = "The URL for the Kasm Workspaces build"
   type        = string
   # Module-specific default, locked to the release tag; override per deployment via tfvars.
-  default = "https://kasm-static-content.s3.us-east-1.amazonaws.com/kasm_release_1.19.0.tar.gz"
+  default = "https://kasm-static-content.s3.us-east-1.amazonaws.com/kasm_release_1.19.0-latest.tar.gz"
 }
 
 variable "kasm_stig_url" {
@@ -852,10 +874,6 @@ variable "vm_instance_lookups" {
     al2 = {
       account_id  = "amazon"
       image_regex = "al2023-ami-2023.*-x86_64"
-    }
-    kasm_ubuntu = {
-      account_id  = "037118362629"
-      image_regex = "Kasm-Ubuntu 22.04 x86_64 - CIS Level 2 Hardened.*"
     }
     windows = {
       account_id  = "801119661308"
@@ -1023,9 +1041,9 @@ variable "proxy_additional_install_arguments" {
 ##############################
 
 variable "webapp_instance_type" {
-  description = ""
+  description = "Instance type for the webapp (Kasm API / manager) autoscaling groups"
   type        = string
-  default     = "t3.medium"
+  default     = "t8i.medium"
 }
 
 variable "webapp_additional_install_arguments" {
@@ -1041,26 +1059,56 @@ variable "webapp_additional_install_arguments" {
 
 ##############################
 ##                          ##
-## Teleport/Wazuh Variables ##
+##  Userdata Bootstrap Vars ##
 ##                          ##
 ##############################
 
-variable "teleport_version" {
-  description = "The teleport release version to install on the node"
-  type        = string
-  default     = "15.4.19"
+variable "kasminit_secret_arns" {
+  description = "Additional Secrets Manager secret ARNs the instance roles may read at boot (e.g. secrets a wrapper's userdata fetches). This deployment's system credentials secret is always included."
+  type        = list(string)
+  default     = []
 }
 
-variable "wazuh_group" {
-  description = "The Wazuh group to join the instance to for administration"
-  type        = string
-  default     = ""
+variable "kasminit_kms_key_arns" {
+  description = "KMS key ARNs the instance roles may use for kms:Decrypt on kasminit_secret_arns encrypted with a customer-managed key."
+  type        = list(string)
+  default     = []
 }
 
-variable "wazuh_url" {
-  description = "The Wazuh agent join URL. Empty by default (public-safe); the parent wrapper injects the internal endpoint."
+variable "userdata_template_vars" {
+  description = "Extra template variables merged into every userdata templatefile() call, for wrapper-supplied userdata (use_parent_userdata = true) that needs values this module does not define. Module-defined keys take precedence."
+  type        = map(string)
+  default     = {}
+}
+
+variable "docker_login" {
+  description = "Enable Docker Hub login on all instances. Required when deploying a custom/dev build that pulls images from a private registry."
+  type        = bool
+  default     = false
+}
+
+variable "install_sysbox" {
+  description = "Whether or not to install GPU libraries on the Kasm Agent"
+  type        = bool
+  default     = false
+}
+
+variable "enable_enhanced_db_monitoring" {
+  description = "When true, installs pg_stat_statements and creates the db-o11y observability user in PostgreSQL with pg_monitor and pg_read_all_stats grants. VM database only."
+  type        = bool
+  default     = false
+}
+
+variable "kasm_db_o11y_password" {
+  description = "Password for the db-o11y PostgreSQL observability user. Auto-generated when empty and enable_enhanced_db_monitoring is true."
   type        = string
-  default     = ""
+  #sensitive   = true
+  default = ""
+
+  validation {
+    condition     = var.kasm_db_o11y_password == "" || can(regex("^[a-zA-Z0-9]{12,40}", var.kasm_db_o11y_password))
+    error_message = "The kasm_db_o11y_password must be between 12 and 40 alphanumeric characters."
+  }
 }
 
 #######################################
@@ -1087,8 +1135,7 @@ variable "waf_bypass_ips" {
 ## Per-role userdata template script paths, relative to var.userdata_dir.
 ## Standalone child deployments default var.userdata_dir to this module's
 ## userdata directory and default these filenames to the bundled standalone
-## scripts. Parent-wrapper deployments pass the parent repo's userdata directory
-## and parent-owned filenames explicitly.
+## scripts. A wrapping module can pass its own userdata directory and filenames.
 
 variable "userdata_dir" {
   description = "Directory containing userdata templates. Empty string defaults to this module's ./userdata directory for standalone child deployments."
@@ -1146,11 +1193,9 @@ variable "windows_userdata_file" {
 
 #######################################
 ##                                   ##
-##   Preseed / OTP (split-relocated) ##
+##   Preseed / OTP                   ##
 ##                                   ##
 #######################################
-## Relocated from the former kasm_internal.tf during the parent/child split.
-## Public-safe defaults; the parent wrapper overrides with internal values.
 
 variable "alembic_version" {
   description = "The Alembic version of the database schema to use for this configuration. Must match the Kasm version being installed."
@@ -1164,9 +1209,16 @@ variable "alembic_version" {
 }
 
 variable "api_preseeds" {
-  description = "Extra Kasm API accounts to seed into default_properties.yaml, mapped api_key => account name. One generated password is created per entry. Empty by default (public-safe); the parent populates internal API accounts."
-  type        = map(string)
-  default     = {}
+  description = "Kasm API accounts to seed into default_properties.yaml, keyed by a stable name. A password is generated per entry. Empty by default."
+  type = map(object({
+    api_key     = string
+    name        = string
+    permissions = optional(list(string), [])
+    expires     = optional(string, null)
+    enabled     = optional(bool, true)
+    read_only   = optional(bool, true)
+  }))
+  default = {}
 }
 
 variable "kasm_system_otp_code" {

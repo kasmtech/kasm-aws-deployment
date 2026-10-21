@@ -35,12 +35,24 @@ variable "disable_db_logging" {
 variable "passwords" {
   description = "Passwords for default accounts"
   type = object({
-    kasm_engineering_api = string
-    kcs_api              = string
-    site_admin           = optional(string, "")
-    workspace_admin      = optional(string, "")
-    system_admin         = optional(string, "")
+    site_admin      = optional(string, "")
+    workspace_admin = optional(string, "")
+    system_admin    = optional(string, "")
   })
+}
+
+variable "api_configs" {
+  description = "Kasm API accounts to seed, keyed by a stable name (the name seeds the account's deterministic UUIDs). password is hashed into the preseed."
+  type = map(object({
+    api_key     = string
+    name        = string
+    password    = string
+    permissions = optional(list(string), [])
+    expires     = optional(string, null)
+    enabled     = optional(bool, true)
+    read_only   = optional(bool, true)
+  }))
+  default = {}
 }
 
 variable "extra_api_configs" {

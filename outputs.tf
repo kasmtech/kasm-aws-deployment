@@ -1,8 +1,7 @@
 #########################################################################################
 ##                                                                                     ##
-##  Child output contract (parent/child split — FR-5).                                 ##
-##  The parent wrapper (kasm-aws-multi-region-tf) consumes these to drive the          ##
-##  Kasm-internal side-effects it owns: 1Password uploads and the preseed S3 upload.   ##
+##  Output contract. A wrapping module can consume these to drive its own side         ##
+##  effects (e.g. storing credentials in a secrets manager, uploading the preseed).    ##
 ##  Standalone deployments may ignore them. Credential-bearing outputs are sensitive.  ##
 ##                                                                                     ##
 #########################################################################################
@@ -145,7 +144,7 @@ output "windows_user_data" {
 #######################################
 
 output "kasm_credentials" {
-  description = "Generated Kasm passwords/tokens consumed by parent 1Password uploads."
+  description = "Generated Kasm passwords/tokens, for callers that store them in their own secrets store."
   value = {
     admin          = local.admin_password
     database       = local.database_password
@@ -176,13 +175,13 @@ output "user_credentials_to_upload" {
 #######################################
 
 output "default_properties_yaml" {
-  description = "Generated default_properties.yaml (null when generate_db_preseed = false). Parent uploads this to its internal bucket."
+  description = "Generated default_properties.yaml (null when generate_db_preseed = false). Callers upload it wherever the DB preseed is read from."
   value       = try(module.custom_properties[0].default_properties_yaml, null)
 }
 
 #########################################################################################
 ##                                                                                     ##
-##  Add-on enablement surface. Lets a caller (e.g. the parent wrapper) deploy extra    ##
+##  Add-on enablement surface. Lets a caller (e.g. a wrapping module) deploy extra    ##
 ##  webapp zones into this deployment's load balancers and DNS: inject TGs/rules via   ##
 ##  the var.additional_* inputs, then read the resulting ARNs + placement + LB/DNS     ##
 ##  identifiers back from here to attach an ASG and create Route53 records.            ##

@@ -54,6 +54,13 @@ locals {
         "arn:aws:ec2:*:${data.aws_caller_identity.this.account_id}:instance/*"
       ]
       }, {
+      ## Kasm imports a temporary key pair per provisioned agent and deletes it
+      ## once the agent is up; without this every provisioning run fails.
+      Sid      = "CleanupAgentKeyPairs"
+      Effect   = "Allow"
+      Action   = ["ec2:DeleteKeyPair"]
+      Resource = ["arn:aws:ec2:*:${data.aws_caller_identity.this.account_id}:key-pair/*"]
+      }, {
       Sid    = "KMSEncryptionForEBS"
       Effect = "Allow"
       Action = [
@@ -129,28 +136,44 @@ module "iam_policies" {
   }
 }
 
+## Secrets the instances read at boot: always this deployment's system
+## credentials; plus any extra secrets / KMS keys a wrapper's userdata needs
+## (var.kasminit_secret_arns / var.kasminit_kms_key_arns).
 data "aws_iam_policy_document" "kasminit" {
   statement {
-    effect = "Allow"
-    actions = [
-      "secretsmanager:GetSecretValue"
-    ]
-    resources = [
-      "arn:aws:secretsmanager:us-east-1:531489670392:secret:meta-secrets-BBHAK0",
-      "arn:aws:secretsmanager:us-east-1:531489670392:secret:grafana-deploy-token-dR9GgV",
-      "arn:aws:secretsmanager:us-east-1:531489670392:secret:wazuh-deploy-token-71W0kY"
-    ]
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = concat([local.sm_system_cred_arn], var.kasminit_secret_arns)
   }
 
-  statement {
-    effect = "Allow"
-    actions = [
-      "kms:Decrypt"
-    ]
-    resources = [
-      "arn:aws:kms:us-east-1:531489670392:key/58092e19-1408-4308-a53c-9189ff707c4b"
-    ]
+  dynamic "statement" {
+    for_each = length(var.kasminit_kms_key_arns) > 0 ? [1] : []
+    content {
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = var.kasminit_kms_key_arns
+    }
   }
+
+  provider = aws.regions[var.primary_region]
+}
+
+## The DB additionally reads the user and admin credential secrets at boot
+## (system credentials come from the kasminit policy).
+data "aws_iam_policy_document" "kasm_db_creds_read" {
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [local.sm_system_cred_arn, local.sm_user_cred_arn, local.sm_admin_cred_arn]
+  }
+
+  provider = aws.regions[var.primary_region]
+}
+
+resource "aws_iam_policy" "kasm_db_creds_read" {
+  name        = "${local.standard_customer_name}-kasm-db-creds-read"
+  description = "Read the deployment's system, user and admin credential secrets at DB boot"
+  policy      = data.aws_iam_policy_document.kasm_db_creds_read.json
 
   provider = aws.regions[var.primary_region]
 }

@@ -2,29 +2,30 @@
 ##                                                                                     ##
 ##  Kasm DB preseed generation. Produces the `default_properties.yaml` that seeds the  ##
 ##  Kasm database (Site Admin / Workspace Admin groups + permissions, and any extra    ##
-##  API accounts). Relocated from the former kasm_internal.tf during the parent/child  ##
-##  split: GENERATION is generic and lives here; the internal S3 UPLOAD of the result  ##
-##  stays in the parent wrapper (it targets an internal bucket).                        ##
+##  API accounts) and, unless var.upload_db_preseed = false, uploads it to the DB     ##
+##  backup bucket where the database (VM userdata or remote DB init) reads it.         ##
 ##                                                                                     ##
-##  Standalone consumers read `module.custom_properties[0].default_properties_yaml`    ##
-##  via the `default_properties_yaml` output.                                          ##
+##  Wrappers that store the file themselves set upload_db_preseed = false and read    ##
+##  the `default_properties_yaml` output.                                              ##
 ##                                                                                     ##
 #########################################################################################
 
 locals {
   ## Passwords baked into the preseed. API account passwords are generated for
-  ## each entry in var.api_preseeds (empty by default — public-safe). The parent
-  ## populates var.api_preseeds with internal API account names.
-  kasm_passwords = merge(
-    {
-      site_admin      = local.siteadmin_password
-      workspace_admin = local.workspaceadmin_password
-      system_admin    = local.system_password
-    },
-    {
-      for api, _ in var.api_preseeds : api => module.api_passwords[api].password
-    }
-  )
+  ## each entry in var.api_preseeds (empty by default).
+  kasm_passwords = {
+    site_admin      = local.siteadmin_password
+    workspace_admin = local.workspaceadmin_password
+    system_admin    = local.system_password
+  }
+
+  ## Read by the VM DB userdata (BACKUP_BUCKET_DIR_NAME + CUSTOM_PROPERTIES_FILENAME)
+  ## and by modules/remote_db_init (preseed_s3_key); keep the three in step.
+  db_preseed_s3_key = "aws/${local.standard_customer_name}/${var.kasm_version}-default_properties.yaml"
+
+  preseed_api_configs = {
+    for api, config in var.api_preseeds : api => merge(config, { password = module.api_passwords[api].password })
+  }
 }
 
 ## One generated password per extra API account requested by the caller.
@@ -41,4 +42,16 @@ module "custom_properties" {
   alembic_version = var.alembic_version
   domain_name     = var.kasm_domain_name
   passwords       = local.kasm_passwords
+  api_configs     = local.preseed_api_configs
+}
+
+## Store the rendered preseed where the database picks it up at first boot.
+resource "aws_s3_object" "db_preseed" {
+  count = var.generate_db_preseed && var.upload_db_preseed ? 1 : 0
+
+  bucket  = var.db_backup_bucket_name
+  key     = local.db_preseed_s3_key
+  content = module.custom_properties[0].default_properties_yaml
+
+  provider = aws.regions[var.primary_region]
 }
