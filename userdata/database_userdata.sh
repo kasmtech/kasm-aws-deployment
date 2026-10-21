@@ -17,8 +17,8 @@ KASM_DOWNLOAD_URL='${KASM_DOWNLOAD_URL}'
 KASM_STIG_OVERRIDE='${KASM_STIG_OVERRIDE}'
 ADDITIONAL_INSTALL_ARGS='${ADDITIONAL_DATABASE_INSTALL_ARGS}'
 
-# Block volume mount target (e.g. nvme2n1)
-BLOCK_DEVICE='${BLOCK_DEVICE}'
+# EBS volume ID of the data volume (e.g. vol-0123456789abcdef0)
+BLOCK_VOLUME_ID='${BLOCK_VOLUME_ID}'
 
 # Kasm bootstrap credentials (used only on fresh DB init)
 KASM_DB_PASS='${KASM_DB_PASS}'
@@ -36,10 +36,6 @@ CUSTOM_PROPERTIES_FILENAME='${CUSTOM_PROPERTIES_FILENAME}'
 # Backup cron (optional — empty BACKUP_BUCKET_DIR_NAME skips cron creation)
 BACKUP_BUCKET_DIR_NAME='${BACKUP_BUCKET_DIR_NAME}'
 
-# Postgres tuning via pgconfigctl (optional — empty PGCONFIGCTL_SECRET_ID skips this entirely).
-# When set, must be an AWS Secrets Manager ARN holding {"username": "...", "key": "..."} credentials for
-# registry.gitlab.com/kasm-technologies/engineering/ci-cd-core/docker/pgconfig-api/pgconfigctl.
-PGCONFIGCTL_SECRET_ID='${PGCONFIGCTL_SECRET_ID}'
 DB_CONNECTIONS='${DB_CONNECTIONS}'
 
 # Enhanced DB monitoring (optional — creates a read-only db-o11y account)
@@ -54,14 +50,6 @@ KASM_DEPLOYMENT_DIR="/opt/kasm/.kasm_deployment"
 VOLUME_MOUNT_PATH="/opt/kasm"
 SWAP_SIZE_GB="8"
 INSTALL_PACKAGES="iputils-ping dnsutils netcat-openbsd htop cron vim kmod"
-
-# pgconfigctl tuning constants (Kasm-internal GitLab CR image, gated on PGCONFIGCTL_SECRET_ID)
-AWS_VAULT_REGION="us-east-1"
-PGTUNE_IMAGE="registry.gitlab.com/kasm-technologies/engineering/ci-cd-core/docker/pgconfig-api/pgconfigctl:latest"
-PG_VERSION="14"
-DB_SETTINGS_PATH="/opt/kasm/current/conf/database"
-SETTINGS_FILENAME="postgres_optimization"
-DB_CONFIG_FILENAME="postgresql.conf"
 
 CMD='\e[0;34m'
 WRN='\e[0;33m'
@@ -98,10 +86,16 @@ function create_db_volume() {
 }
 
 function mount_block_volume() {
-    while ! test -b "/dev/$${BLOCK_DEVICE}"; do
-        echo "Waiting for /dev/$${BLOCK_DEVICE} to become available..."
+    # Resolve the data volume by its EBS volume ID. NVMe enumeration order
+    # (nvme1n1, nvme2n1, ...) is not stable on Nitro instances; the by-id
+    # link carries the volume ID without its dash.
+    local block_device_link="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$${BLOCK_VOLUME_ID//-/}"
+    while ! test -b "$${block_device_link}"; do
+        echo "Waiting for $${BLOCK_VOLUME_ID} ($${block_device_link}) to become available..."
         sleep 5
     done
+    local BLOCK_DEVICE
+    BLOCK_DEVICE="$(basename "$(readlink -f "$${block_device_link}")")"
 
     # Preserve any existing role/banner state across the mount
     if [[ -d "$${KASM_DEPLOYMENT_DIR}/" ]]; then
@@ -114,7 +108,18 @@ function mount_block_volume() {
     fi
 
     mkdir -p "$${VOLUME_MOUNT_PATH}"
-    echo "/dev/$${BLOCK_DEVICE} $${VOLUME_MOUNT_PATH} xfs defaults,_netdev,nofail 0 2" >> /etc/fstab
+
+    # Images that ship their own fstab entry for the mount point (e.g. an LVM
+    # layout with a dedicated volume there) would win it on the next boot and
+    # leave the data volume unmounted. Retire every other entry for the mount point and
+    # unmount it so only the data volume claims it.
+    awk -v mp="$${VOLUME_MOUNT_PATH}" -v keep="$${block_device_link}" \
+        '$1 !~ /^#/ && $2 == mp && $1 != keep { $0 = "#" $0 } { print }' /etc/fstab > /etc/fstab.kasm
+    cat /etc/fstab.kasm > /etc/fstab && rm -f /etc/fstab.kasm
+    if mountpoint -q "$${VOLUME_MOUNT_PATH}" && [[ "$(findmnt -no SOURCE "$${VOLUME_MOUNT_PATH}")" != "$(readlink -f "$${block_device_link}")" ]]; then
+        umount "$${VOLUME_MOUNT_PATH}"
+    fi
+    grep -qsF "$${block_device_link} $${VOLUME_MOUNT_PATH} " /etc/fstab || echo "$${block_device_link} $${VOLUME_MOUNT_PATH} xfs defaults,_netdev,nofail 0 2" >> /etc/fstab
     mount -a
 
     if [[ -d /tmp/.kasm_deployment ]]; then
@@ -279,15 +284,15 @@ fi
 
 # Optional: fetch a customer-supplied default_properties.yaml from S3 before install
 if [[ -n "$${CUSTOM_PROPERTIES_FILENAME}" ]] && [[ -n "$${BUCKET_NAME}" ]]; then
-    echo "Waiting for s3://$${BUCKET_NAME}/$${CUSTOM_PROPERTIES_FILENAME} to be available..."
-    while [[ -z "$(aws s3 ls "s3://$${BUCKET_NAME}/$${CUSTOM_PROPERTIES_FILENAME}" 2>/dev/null)" ]]; do
+    echo "Waiting for s3://$${BUCKET_NAME}/$${BACKUP_BUCKET_DIR_NAME}$${CUSTOM_PROPERTIES_FILENAME} to be available..."
+    while [[ -z "$(aws s3 ls "s3://$${BUCKET_NAME}/$${BACKUP_BUCKET_DIR_NAME}$${CUSTOM_PROPERTIES_FILENAME}" 2>/dev/null)" ]]; do
         sleep 10
     done
 
     DEFAULT_PROPERTIES_PATH="$${KASM_DOWNLOAD_FOLDER}/kasm_release/conf/database/seed_data"
     mv "$${DEFAULT_PROPERTIES_PATH}/default_properties.yaml" \
        "$${DEFAULT_PROPERTIES_PATH}/default_properties.yaml.bak"
-    aws s3 cp "s3://$${BUCKET_NAME}/$${CUSTOM_PROPERTIES_FILENAME}" \
+    aws s3 cp "s3://$${BUCKET_NAME}/$${BACKUP_BUCKET_DIR_NAME}$${CUSTOM_PROPERTIES_FILENAME}" \
               "$${DEFAULT_PROPERTIES_PATH}/default_properties.yaml" \
               --region "$${BUCKET_REGION}"
 
@@ -309,58 +314,6 @@ bash "$${KASM_DOWNLOAD_FOLDER}/kasm_release/install.sh" \
     -S "$${ROLE}" -e -H \
     "$${DB_ARGS[@]}" \
     "$${ADDITIONAL_INSTALL_ARGS}"
-
-##############################################################################
-# Postgres tuning via pgconfigctl (optional — gated on PGCONFIGCTL_SECRET_ID)
-##############################################################################
-if [[ -n "$${PGCONFIGCTL_SECRET_ID}" ]]; then
-    DB_MEMORY=$(free -h | grep -i mem | awk '{print $2}' | cut -d'G' -f1)
-    DB_CPUS=$(nproc)
-
-    PGCONFIGCTL_CREDS="$(aws secretsmanager get-secret-value \
-        --secret-id "$${PGCONFIGCTL_SECRET_ID}" \
-        --region "$${AWS_VAULT_REGION}" \
-        --output json | jq -r '.SecretString')"
-    PGCONFIGCTL_USER=$(jq -r .username <<< "$${PGCONFIGCTL_CREDS}")
-    PGCONFIGCTL_KEY=$(jq -r .key       <<< "$${PGCONFIGCTL_CREDS}")
-
-    if [[ -n "$${PGCONFIGCTL_USER}" ]] && [[ -n "$${PGCONFIGCTL_KEY}" ]]; then
-        echo "Authenticating to GitLab Container Registry"
-        echo "$${PGCONFIGCTL_KEY}" | docker login "registry.gitlab.com" \
-            -u "$${PGCONFIGCTL_USER}" --password-stdin
-
-        docker run --rm "$${PGTUNE_IMAGE}" \
-            tune --version "$${PG_VERSION}" \
-                 --cpus "$${DB_CPUS}" \
-                 --max-connections "$${DB_CONNECTIONS}" \
-                 --ram "$${DB_MEMORY}GB" \
-                 --profile WEB --os linux --format conf \
-            | grep -v '#' | grep -v -e '^$' \
-            > "$${DB_SETTINGS_PATH}/$${SETTINGS_FILENAME}"
-
-        # Scrub the GitLab CR credentials out of /root/.docker/config.json
-        jq 'del(.auths."registry.gitlab.com")' < /root/.docker/config.json \
-            > /root/.docker/config.json.tmp \
-            && mv /root/.docker/config.json.tmp /root/.docker/config.json
-
-        # Back up the original postgresql.conf, then merge tuned values in
-        cp "$${DB_SETTINGS_PATH}/$${DB_CONFIG_FILENAME}" \
-           "$${DB_SETTINGS_PATH}/$${DB_CONFIG_FILENAME}.$(date +"%Y%m%d%H%S")"
-
-        while IFS= read -r line; do
-            PARAM=$(echo "$${line}" | cut -d'=' -f1)
-            sed -i "/$${PARAM}=.*/s/^#//" "$${DB_SETTINGS_PATH}/$${DB_CONFIG_FILENAME}"
-            sed -i "s/$${PARAM}=.*/$${line}/" "$${DB_SETTINGS_PATH}/$${DB_CONFIG_FILENAME}"
-        done < "$${DB_SETTINGS_PATH}/$${SETTINGS_FILENAME}"
-
-        chown kasm_db:70 "$${DB_SETTINGS_PATH}/$${DB_CONFIG_FILENAME}"
-
-        echo "Restarting Kasm services to pick up tuned Postgres config..."
-        /opt/kasm/bin/stop && /opt/kasm/bin/start
-    else
-        echo -e "$${WRN}PGCONFIGCTL secret payload missing username/key — skipping Postgres tuning$${NC}"
-    fi
-fi
 
 ##############################################################################
 # Backup cron job (optional — gated on BACKUP_BUCKET_DIR_NAME)

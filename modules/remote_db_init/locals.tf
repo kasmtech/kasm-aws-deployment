@@ -37,8 +37,8 @@ locals {
   ## aws_instance.user_data_base64 field, which accepts non-UTF8 bytes.
   ##
   ## The script lives in the caller-selected userdata directory. Standalone child
-  ## deployments default this to the child module's bundled userdata directory;
-  ## the parent wrapper passes its own userdata directory explicitly.
+  ## deployments default this to the module's bundled userdata directory; a
+  ## wrapping module can pass its own userdata directory.
   userdata = base64gzip(
     templatefile("${var.userdata_dir}/${var.userdata_file}", {
       AWS_REGION               = var.primary_region

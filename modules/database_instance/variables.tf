@@ -34,8 +34,14 @@ variable "db_instance_type" {
   type        = string
 }
 
+variable "extra_policy_arns" {
+  description = "Additional IAM policy ARNs to attach to the db backup role, keyed by a static name."
+  type        = map(string)
+  default     = {}
+}
+
 variable "kasminit_policy_arn" {
-  description = "ARN of the kasminit IAM policy (created in the parent project) to attach to the db backup role"
+  description = "ARN of the kasminit IAM policy (created by the calling module) to attach to the db backup role"
   type        = string
 }
 

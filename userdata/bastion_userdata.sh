@@ -38,7 +38,7 @@ fi
 # Resolve user / group / .ssh directory based on AMI flavor.
 # (Bastion is a jumphost — it does not run Kasm services or join the Kasm cluster.)
 case "$${IMAGE_TYPE}" in
-    ubuntu | kasm_ubuntu)
+    ubuntu)
         SSH_FOLDER="/home/ubuntu/.ssh"
         SSH_USER="ubuntu"
         SSH_GROUP="ubuntu"

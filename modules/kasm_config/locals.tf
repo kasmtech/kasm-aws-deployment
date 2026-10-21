@@ -1,80 +1,6 @@
 locals {
-  default_api_configs = {
-    kasm_engineering_api = {
-      api_key  = "KasmRWApiKey"
-      enabled  = true
-      expires  = null
-      name     = "Kasm Engineering Automation"
-      password = var.passwords.kasm_engineering_api
-      permissions = [
-        "autoscale_create",
-        "autoscale_delete",
-        "autoscale_modify",
-        "autoscale_schedule_create",
-        "autoscale_schedule_delete",
-        "autoscale_schedule_modify",
-        "autoscale_schedule_view",
-        "autoscale_view",
-        "managers_view",
-        "server_pools_view",
-        "servers_view",
-        "vm_provider_create",
-        "vm_provider_delete",
-        "vm_provider_modify",
-        "vm_provider_view",
-        "zones_view"
-      ]
-      read_only = false
-    }
-    kcs_api = {
-      api_key  = "KcsReadApiKy"
-      enabled  = true
-      expires  = null
-      name     = "Kasm Customer Support"
-      password = var.passwords.kcs_api
-      permissions = [
-        "user",
-        "users_view",
-        "groups_view",
-        "groups_view_ifmember",
-        "groups_view_system",
-        "agents_view",
-        "staging_view",
-        "casting_view",
-        "images_view",
-        "sessions_view",
-        "session_recordings_view",
-        "webfilters_view",
-        "brandings_view",
-        "settings_view",
-        "auth_view",
-        "licenses_view",
-        "system_view",
-        "reports_view",
-        "managers_view",
-        "zones_view",
-        "companies_view",
-        "connection_proxy_view",
-        "physical_tokens_view",
-        "servers_view",
-        "server_pools_view",
-        "autoscale_view",
-        "vm_provider_view",
-        "autoscale_schedule_view",
-        "dns_providers_view",
-        "registries_view",
-        "storage_providers_view",
-        "egress_providers_view",
-        "egress_gateways_view",
-        "ad_user_management_view",
-        "banners_view",
-        "server_templates_view",
-        "labels_view"
-      ]
-      read_only = true
-    }
-  }
-  all_api_configs = merge(local.default_api_configs, var.extra_api_configs)
+  ## API accounts to seed: caller-defined (var.api_configs, empty by default).
+  all_api_configs = merge(var.api_configs, var.extra_api_configs)
   rdp_conn = {
     category         = "connections"
     description      = "Default connection settings for VM RDP sessions."
@@ -154,7 +80,10 @@ locals {
     },
     { for user in local.users_to_create : user => uuid() },
     { for group in local.groups_to_create : group => uuid() if group != "all_users" },
-    { all_users = var.default_groups.all_users.group_id }
+    { all_users = var.default_groups.all_users.group_id },
+    ## API accounts: deterministic per deployment + account name, so the
+    ## api_id / salt / hash stay stable across plans.
+    { for api in keys(local.all_api_configs) : api => uuidv5("dns", "${api}.api.${var.domain_name}") }
   ]...)
 
   ## API settings to use

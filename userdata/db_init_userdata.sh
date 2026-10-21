@@ -126,8 +126,7 @@ KASM_MANAGER_TOKEN=$(echo "$SYSTEM_CREDS" | jq -r .manager)
 KASM_USER_PASS=$(echo "$USER_CREDS" | jq -r .password)
 KASM_ADMIN_PASS=$(echo "$ADMIN_CREDS" | jq -r .password)
 
-## Aurora master password equals the Kasm DB password (see local.database_password
-## in the AWS repo's kasm_internal.tf).
+## Aurora master password equals the Kasm DB password (local.database_password).
 RDS_MASTER_PASS="$KASM_DB_PASS"
 
 ## Make psql pick the master password without echoing it back to logs.
@@ -214,7 +213,7 @@ fi
 
 ##############################################################################
 ## Fetch the rendered preseed YAML (custom default_properties.yaml).
-## Stored under /opt to avoid /tmp noexec mounts on hardened/noble AMIs.
+## Stored under /opt to avoid /tmp noexec mounts on some AMIs.
 ##############################################################################
 INSTALL_DIR=/opt/kasm-init
 mkdir -p "$INSTALL_DIR"
@@ -227,7 +226,7 @@ fi
 ##############################################################################
 ## Download + extract Kasm installer under /opt. The bundled yq/curl/etc
 ## binaries need an exec-permitted filesystem, which /tmp is not on some
-## hardened AMI variants (Ubuntu 24.04 minimal, CIS-hardened, etc).
+## AMIs (/tmp mounted noexec).
 ##############################################################################
 cd "$INSTALL_DIR"
 wget -q "${KASM_DOWNLOAD_URL}"

@@ -20,7 +20,8 @@ locals {
     var.kasm_manager_token == "" ? "manager" : "",
     var.generate_db_preseed && var.kasm_siteadmin_password == "" ? "siteadmin" : "",
     var.generate_db_preseed && var.kasm_workspaceadmin_password == "" ? "workspaceadmin" : "",
-    var.generate_db_preseed && var.kasm_system_password == "" ? "system" : ""
+    var.generate_db_preseed && var.kasm_system_password == "" ? "system" : "",
+    var.enable_enhanced_db_monitoring && var.kasm_db_o11y_password == "" ? "db_o11y" : ""
   ]) : [])
 
   admin_password          = var.kasm_admin_password == "" ? module.passwords["admin"].password : var.kasm_admin_password
@@ -31,15 +32,22 @@ locals {
   siteadmin_password      = var.generate_db_preseed && var.kasm_siteadmin_password == "" ? module.passwords["siteadmin"].password : var.kasm_siteadmin_password
   workspaceadmin_password = var.generate_db_preseed && var.kasm_workspaceadmin_password == "" ? module.passwords["workspaceadmin"].password : var.kasm_workspaceadmin_password
   system_password         = var.generate_db_preseed && var.kasm_system_password == "" ? module.passwords["system"].password : var.kasm_system_password
+  ## Only meaningful with enhanced DB monitoring; supplied by the caller or
+  ## generated here when empty.
+  db_o11y_password = var.enable_enhanced_db_monitoring ? (
+    var.kasm_db_o11y_password != "" ? var.kasm_db_o11y_password : try(module.passwords["db_o11y"].password, "")
+  ) : ""
 
   ## Credential groupings consumed by the AWS Secrets Manager payloads below
-  ## (and, in the parent wrapper, by the 1Password uploads via module outputs).
-  ## Relocated from the former kasm_internal.tf during the parent/child split.
-  system_credentials_to_upload = {
-    database = local.database_password,
-    service  = local.service_token,
-    manager  = local.manager_token,
-  }
+  ## (and exposed to callers via module outputs).
+  system_credentials_to_upload = merge(
+    {
+      database = local.database_password,
+      service  = local.service_token,
+      manager  = local.manager_token,
+    },
+    var.enable_enhanced_db_monitoring ? { db_o11y = local.db_o11y_password } : {}
+  )
 
   user_credentials_to_upload = {
     admin          = local.admin_password,
@@ -51,8 +59,7 @@ locals {
 
   ## AWS Secrets Manager payloads. Each entry maps an SM secret name to a
   ## JSON-native payload (nested maps, native arrays — no section/field/type
-  ## metadata). Same credential and config values 1Password sees, shaped for
-  ## consumers that read SM directly.
+  ## metadata), shaped for consumers that read SM directly.
 
   aws_sm_autoscale_configs = {
     for region in local.all_regions :

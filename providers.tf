@@ -51,6 +51,17 @@ locals {
     "sa-east-1",      # Brazil
     "il-central-1"
   ])
+
+  ## Regions this deployment actually touches. Every other aws.regions instance
+  ## is configured but never used, so it skips the STS credential check and
+  ## account-ID lookup — opt-in regions that are not enabled in the account
+  ## (e.g. ap-east-2, il-central-1) reject STS with InvalidClientTokenId.
+  provider_active_regions = setunion(
+    local.all_regions,
+    toset(var.rds_dr_regions),
+    toset(keys(var.local_zones)),
+    toset(values(var.webapp_deployment_target)),
+  )
 }
 provider "aws" {
   for_each = local.all_aws_regions
@@ -58,6 +69,9 @@ provider "aws" {
   alias   = "regions"
   profile = var.aws_profile
   region  = each.key
+
+  skip_credentials_validation = !contains(local.provider_active_regions, each.key)
+  skip_requesting_account_id  = !contains(local.provider_active_regions, each.key)
 
   ## Uncomment if you want to use access keys instead of SSO
   #access_key = var.aws_access_key
