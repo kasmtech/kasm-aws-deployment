@@ -1,3 +1,7 @@
+data "aws_ec2_instance_type" "this" {
+  instance_type = var.instance_type
+}
+
 ## Create instance launch template
 resource "aws_launch_template" "this" {
   name                   = var.name
@@ -48,6 +52,16 @@ resource "aws_launch_template" "this" {
   network_interfaces {
     associate_public_ip_address = false
     security_groups             = var.security_group_ids
+
+    ## Nitro v6 types (t8i, m8i, ...) default to 350s, which drops idle DB connections.
+    ## Xen types cannot set this and already default to 432000s.
+    dynamic "connection_tracking_specification" {
+      for_each = data.aws_ec2_instance_type.this.hypervisor == "xen" ? [] : [1]
+
+      content {
+        tcp_established_timeout = 432000
+      }
+    }
   }
 
   tags = {
